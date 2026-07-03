@@ -139,7 +139,7 @@ function AnonymousVotePanel({
         })}
       </div>
       <p className="mt-2 text-xs text-gray-400">
-        투표는 이름 없이 집계됩니다. 같은 섹션에서는 선택을 바꿀 수 있습니다.
+        투표는 익명으로 이 브라우저에만 저장됩니다. 같은 섹션에서는 선택을 바꿀 수 있습니다.
       </p>
     </div>
   );

@@ -112,8 +112,9 @@ export async function POST(request: Request, context: RouteContext) {
       model,
     } satisfies OpinionClusteringResult);
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown GMS API error.';
+    // 업스트림 오류 본문에는 게이트웨이 내부 정보가 섞일 수 있어 서버 로그에만 남긴다.
+    console.error('[opinion-clusters] GMS clustering failed:', error);
 
-    return fallbackResponse(payload, `GMS 요약 검증에 실패해 로컬 규칙 기반 요약을 사용했습니다. ${message}`);
+    return fallbackResponse(payload, 'GMS 요약 검증에 실패해 로컬 규칙 기반 요약을 사용했습니다.');
   }
 }

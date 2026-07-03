@@ -138,13 +138,8 @@ export const decisionTraces: Record<number, DecisionTrace> = {
     selectionReason: '세 초안 모두 최종 문서 생성보다 선택 과정의 투명성을 핵심 가치로 제안했습니다.',
     alternatives: [],
     conflicts: [],
-    opinions: [
-      {
-        id: 'overview-opinion-1',
-        content: '서비스 정의는 충분히 명확합니다. 다음 버전에서는 팀 단위 사용 사례를 한 줄 더 넣으면 좋겠습니다.',
-        createdAtLabel: '12분 전',
-      },
-    ],
+    // 데모용 가짜 익명 의견은 실제 사용자 의견과 섞여 저장·AI 요약되므로 시드하지 않는다.
+    opinions: [],
   },
   2: {
     decisionBlockId: 'decision-block-problem',
@@ -162,13 +157,7 @@ export const decisionTraces: Record<number, DecisionTrace> = {
       },
     ],
     conflicts: [],
-    opinions: [
-      {
-        id: 'problem-opinion-1',
-        content: '문제 정의는 추적 어려움과 충돌 발견 비용을 분리해서 쓰는 편이 더 설득력 있습니다.',
-        createdAtLabel: '8분 전',
-      },
-    ],
+    opinions: [],
   },
   6: {
     decisionBlockId: 'decision-block-core-features',
@@ -219,18 +208,7 @@ export const decisionTraces: Record<number, DecisionTrace> = {
         sources: [{ authorName: '현우', aiModel: 'Gemini' }],
       },
     ],
-    opinions: [
-      {
-        id: 'mvp-opinion-1',
-        content: 'MVP에서는 Notion 연동보다 출처 추적 정확도가 먼저 검증되어야 합니다.',
-        createdAtLabel: '5분 전',
-      },
-      {
-        id: 'mvp-opinion-2',
-        content: 'Slack 공유는 개발 부담이 작다면 2차 범위 후보로 따로 표시하면 좋겠습니다.',
-        createdAtLabel: '2분 전',
-      },
-    ],
+    opinions: [],
   },
   11: {
     decisionBlockId: 'decision-block-risk',
@@ -258,13 +236,7 @@ export const decisionTraces: Record<number, DecisionTrace> = {
         sources: [{ authorName: '현우', aiModel: 'Gemini' }],
       },
     ],
-    opinions: [
-      {
-        id: 'risk-opinion-1',
-        content: '출처 없는 AI 판단은 제품 신뢰도를 바로 떨어뜨릴 수 있어 MVP에 포함해야 합니다.',
-        createdAtLabel: '4분 전',
-      },
-    ],
+    opinions: [],
   },
 };
 

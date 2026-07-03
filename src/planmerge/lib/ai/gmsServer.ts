@@ -24,6 +24,9 @@ type GmsResponsesApiResponse = {
 
 const DEFAULT_GMS_API_URL = 'https://gms.ssafy.io/gmsapi/api.openai.com/v1/responses';
 const DEFAULT_GMS_MODEL = 'gpt-4.1';
+// 업스트림이 응답을 물고 있으면 분석 라우트가 초안 수만큼의 병렬 요청을
+// 함수 타임아웃까지 잡고 있게 되므로 요청 단위로 끊는다.
+const GMS_REQUEST_TIMEOUT_MS = 60_000;
 
 export function getGmsConfig(): GmsConfig {
   return {
@@ -96,6 +99,7 @@ export async function callGmsJson<T>(
 
   const response = await fetch(apiUrl, {
     method: 'POST',
+    signal: AbortSignal.timeout(GMS_REQUEST_TIMEOUT_MS),
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',

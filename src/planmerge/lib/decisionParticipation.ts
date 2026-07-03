@@ -9,7 +9,6 @@ export type VoteOption = {
   label: string;
   description: string;
   group: VoteGroup;
-  baseVotes: number;
 };
 
 export type DecisionVote = {
@@ -38,28 +37,27 @@ export function createEmptyParticipationState(analysisRunId: number): Participat
   };
 }
 
+// 인덱스 기반 ID는 "선택안으로 적용" 후 옵션이 재배열되면 투표가 다른 내용의
+// 옵션으로 옮겨 붙는다. 분석 결과의 실제 옵션 ID를 우선 사용한다.
 export function buildVoteOptions(trace: DecisionTrace): VoteOption[] {
   return [
     {
-      id: `${trace.decisionBlockId}:selected`,
+      id: trace.selectedOptionId ?? `${trace.decisionBlockId}:selected`,
       label: 'AI 선택안',
       description: trace.selectedContent,
       group: 'selected',
-      baseVotes: trace.conflicts.length > 0 ? 5 : 7,
     },
     ...trace.alternatives.map((alternative, index) => ({
-      id: `${trace.decisionBlockId}:alternative:${index}`,
+      id: alternative.optionId ?? `${trace.decisionBlockId}:alternative:${index}`,
       label: alternative.title,
       description: alternative.description,
       group: 'alternative' as const,
-      baseVotes: Math.max(2, 4 - index),
     })),
     ...trace.conflicts.map((conflict, index) => ({
-      id: `${trace.decisionBlockId}:conflict:${index}`,
+      id: conflict.optionId ?? `${trace.decisionBlockId}:conflict:${index}`,
       label: conflict.title,
       description: conflict.description,
       group: 'conflict' as const,
-      baseVotes: Math.max(1, 2 - index),
     })),
   ];
 }
@@ -70,8 +68,9 @@ export function groupLabel(group: VoteGroup) {
   return '충돌';
 }
 
+// 실제 투표 수만 집계한다. 가공의 기본 표를 깔면 집계가 허구가 된다.
 export function getVoteCount(option: VoteOption, decisionVote?: DecisionVote) {
-  return decisionVote?.overrides[option.id] ?? option.baseVotes;
+  return decisionVote?.overrides[option.id] ?? 0;
 }
 
 export function getTotalVotes(options: VoteOption[], decisionVote?: DecisionVote) {

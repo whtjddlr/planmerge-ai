@@ -209,11 +209,39 @@ function ensureCanonicalMissingSections(result: PlanMergeAnalysisResult): PlanMe
   };
 }
 
+// postProcess의 ensure* 보정은 배열 순회를 전제한다. 골격이 깨진 응답을 그대로 넣으면
+// 검증·repair 재시도 전에 TypeError로 폴백해 버리므로, 보정 가능한 형태인지 먼저 가른다.
+function hasMergeResultShape(result: unknown): result is PlanMergeAnalysisResult {
+  if (typeof result !== 'object' || result === null || Array.isArray(result)) {
+    return false;
+  }
+
+  const record = result as Record<string, unknown>;
+
+  return (
+    Array.isArray(record.normalizedIdeas) &&
+    Array.isArray(record.finalDocumentSections) &&
+    Array.isArray(record.missingSections) &&
+    Array.isArray(record.warnings) &&
+    Array.isArray(record.decisionBlocks) &&
+    record.decisionBlocks.every((block) =>
+      typeof block === 'object' &&
+      block !== null &&
+      Array.isArray((block as Record<string, unknown>).options),
+    ) &&
+    record.finalDocumentSections.every((section) => typeof section === 'object' && section !== null)
+  );
+}
+
 function postProcessMergeResult(
   payload: PlanMergeAnalysisPayload,
   result: PlanMergeAnalysisResult,
   normalizedIdeas: NormalizedIdea[],
 ) {
+  if (!hasMergeResultShape(result)) {
+    return result;
+  }
+
   return ensureCanonicalMissingSections(
     ensureFinalDocumentCoverage(
       ensureDecisionBlockCoverage(
@@ -533,10 +561,11 @@ export async function POST(request: Request) {
       ],
     } satisfies PlanMergeAnalysisResult);
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown analysis error.';
+    // 업스트림 오류 본문에는 게이트웨이 내부 정보가 섞일 수 있어 서버 로그에만 남긴다.
+    console.error('[analyze/planmerge] GMS analysis failed:', error);
 
     return NextResponse.json(
-      buildFallback(payload, `GMS 분석 실패로 로컬 하네스를 사용했습니다. ${message}`),
+      buildFallback(payload, 'GMS 분석 실패로 로컬 하네스를 사용했습니다.'),
     );
   }
 }
