@@ -2,7 +2,7 @@
 
 > 여러 사람이 각자 AI로 만든 기획서 초안을 하나의 문서로 병합하면서, **AI가 선택한 의견, 제외된 대안, 충돌한 의견, 원문 출처**를 섹션별로 추적하는 협업 도구
 
-[Live Demo](https://planmerge-ai.vercel.app) · [GitHub](https://github.com/whtjddlr/togetAI) · [Spec](docs/planmerge-v0.1-spec.md) · [ERD](docs/planmerge-v0.1-erd.mmd)
+[Live Demo](https://planmerge-ai.vercel.app) · [GitHub](https://github.com/whtjddlr/planmerge-ai) · [Spec](docs/planmerge-v0.1-spec.md) · [ERD](docs/planmerge-v0.1-erd.mmd)
 
 ## Why
 
