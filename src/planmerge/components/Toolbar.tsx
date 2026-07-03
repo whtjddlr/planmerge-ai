@@ -12,8 +12,10 @@ type ToolbarProps = {
   onExportWorkspace: () => void;
   onImportWorkspace: () => void;
   onReanalyze: () => void;
+  onShareWorkspace: () => void;
   onViewChange: (view: AppView) => void;
   projectTitle: string;
+  sharedMode: boolean;
 };
 
 const viewCopy: Record<AppView, { title: string; subtitle: string; breadcrumb: string }> = {
@@ -55,8 +57,10 @@ export function Toolbar({
   onExportWorkspace,
   onImportWorkspace,
   onReanalyze,
+  onShareWorkspace,
   onViewChange,
   projectTitle,
+  sharedMode,
 }: ToolbarProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const copy = {
@@ -125,6 +129,15 @@ export function Toolbar({
               >
                 {analysisStatus === 'analyzing' ? '분석 중' : '다시 분석'}
               </button>
+              {!sharedMode && (
+                <button
+                  type="button"
+                  className="w-full rounded px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                  onClick={() => runMenuAction(onShareWorkspace)}
+                >
+                  팀 공유 링크 만들기
+                </button>
+              )}
               <button
                 type="button"
                 className="w-full rounded px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"

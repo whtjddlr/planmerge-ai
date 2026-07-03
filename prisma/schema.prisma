@@ -252,6 +252,47 @@ model DecisionLog {
   @@index([projectId, createdAt])
 }
 
+// 클라이언트 워크스페이스 스냅샷을 그대로 공유하는 MVP용 모델.
+// 정규화 모델(Project~DecisionBlock)로의 이관은 이후 단계에서 진행한다.
+model SharedWorkspace {
+  id        String   @id @default(uuid())
+  title     String
+  snapshot  Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  votes    SharedWorkspaceVote[]
+  opinions SharedWorkspaceOpinion[]
+}
+
+model SharedWorkspaceVote {
+  id              String   @id @default(uuid())
+  workspaceId     String
+  decisionBlockId String
+  optionId        String
+  anonymousKey    String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  workspace SharedWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, decisionBlockId, anonymousKey])
+  @@index([workspaceId, decisionBlockId])
+}
+
+model SharedWorkspaceOpinion {
+  id              String   @id @default(uuid())
+  workspaceId     String
+  decisionBlockId String
+  anonymousKey    String
+  content         String
+  createdAt       DateTime @default(now())
+
+  workspace SharedWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, decisionBlockId, createdAt])
+}
+
 model AIJob {
   id             String    @id @default(uuid())
   projectId      String

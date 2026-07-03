@@ -10,6 +10,7 @@
 - 섹션별 Decision Block 생성
 - 선택안, 선택 이유, 대안, 충돌 의견, 출처 확인
 - 익명 투표와 익명 의견 등록
+- 팀 공유 링크 (Neon DB 설정 시): 링크를 연 참여자 전체 기준으로 투표/의견 집계
 - Review Queue로 내보내기 전 충돌/검토/입력 부족 항목 확인
 - 워크스페이스 JSON 내보내기/가져오기
 
@@ -22,7 +23,7 @@
 - GMS API compatible Responses endpoint
 - Prisma + Neon 설정 파일 포함
 
-현재 MVP는 브라우저 `localStorage` 중심으로 동작합니다. DB 연결은 이후 단계로 분리되어 있습니다.
+기본 동작은 브라우저 `localStorage` 중심입니다. Neon `DATABASE_URL`을 설정하면 "팀 공유 링크 만들기"로 워크스페이스를 서버에 올리고, 링크를 연 팀원들의 투표/익명 의견을 실제로 집계할 수 있습니다 (`docs/neon-setup.md` 참고). DB가 없으면 공유 기능만 비활성화되고 나머지는 그대로 동작합니다.
 
 ## 실행
 

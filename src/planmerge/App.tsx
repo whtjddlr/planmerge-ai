@@ -20,6 +20,7 @@ import {
 } from './lib/localWorkspace';
 import type { DraftFormInput, LocalDecisionLog, ProjectSettings } from './lib/localWorkspace';
 import { generatePlanMergeAnalysis } from './lib/ai/planmergeAnalysisClient';
+import { createSharedWorkspace, fetchSharedWorkspace } from './lib/sharedWorkspaceClient';
 import { createDocumentSectionsFromAnalysis } from './lib/analysisViewModel';
 import { applyDecisionOptionOverride } from './lib/analysisOverride';
 import {
@@ -37,6 +38,7 @@ export default function App() {
   const [analysisStatus, setAnalysisStatus] = useState<AnalysisStatus>('completed');
   const [workspaceState, setWorkspaceState] = useState(defaultWorkspaceState);
   const [hasLoadedWorkspace, setHasLoadedWorkspace] = useState(false);
+  const [sharedWorkspaceId, setSharedWorkspaceId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const noticeTimeoutRef = useRef<number | null>(null);
   const workspaceImportInputRef = useRef<HTMLInputElement | null>(null);
@@ -47,23 +49,52 @@ export default function App() {
   const selectedSection = mergeSections.find((section) => section.number === activeSection) ?? mergeSections[0];
 
   useEffect(() => {
-    const loadTimer = window.setTimeout(() => {
+    let cancelled = false;
+    const wsId = new URLSearchParams(window.location.search).get('ws');
+
+    const loadLocal = () => {
       setWorkspaceState(loadWorkspaceState());
       setHasLoadedWorkspace(true);
-    }, 0);
+    };
+
+    if (!wsId) {
+      const loadTimer = window.setTimeout(loadLocal, 0);
+
+      return () => {
+        window.clearTimeout(loadTimer);
+      };
+    }
+
+    void (async () => {
+      const shared = await fetchSharedWorkspace(wsId);
+
+      if (cancelled) {
+        return;
+      }
+
+      if (shared) {
+        setSharedWorkspaceId(wsId);
+        setWorkspaceState(shared);
+        setHasLoadedWorkspace(true);
+      } else {
+        setNotice('공유 워크스페이스를 불러오지 못해 로컬 데이터를 표시합니다.');
+        loadLocal();
+      }
+    })();
 
     return () => {
-      window.clearTimeout(loadTimer);
+      cancelled = true;
     };
   }, []);
 
   useEffect(() => {
-    if (!hasLoadedWorkspace) {
+    // 공유 모드에서는 남의 워크스페이스로 내 로컬 데이터를 덮어쓰지 않는다.
+    if (!hasLoadedWorkspace || sharedWorkspaceId) {
       return;
     }
 
     saveWorkspaceState(workspaceState);
-  }, [hasLoadedWorkspace, workspaceState]);
+  }, [hasLoadedWorkspace, sharedWorkspaceId, workspaceState]);
 
   useEffect(() => () => {
     if (noticeTimeoutRef.current) {
@@ -195,6 +226,22 @@ export default function App() {
 
   const importWorkspace = () => {
     workspaceImportInputRef.current?.click();
+  };
+
+  const shareWorkspace = async () => {
+    try {
+      const { id } = await createSharedWorkspace(createWorkspaceExport(workspaceState));
+      const shareUrl = `${window.location.origin}${window.location.pathname}?ws=${id}`;
+
+      try {
+        await navigator.clipboard.writeText(shareUrl);
+        showNotice('팀 공유 링크를 클립보드에 복사했습니다. 링크를 연 사람의 투표와 의견이 함께 집계됩니다.');
+      } catch {
+        window.prompt('아래 공유 링크를 복사하세요.', shareUrl);
+      }
+    } catch (error) {
+      showNotice(error instanceof Error ? error.message : '공유 링크 생성에 실패했습니다.');
+    }
   };
 
   const importWorkspaceFile = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -330,6 +377,7 @@ export default function App() {
             key={workspaceState.analysisRunId}
             selectedSection={selectedSection}
             analysisRunId={workspaceState.analysisRunId}
+            sharedWorkspaceId={sharedWorkspaceId}
             onApplyDecisionOption={applyDecisionOption}
           />
         )}
@@ -353,8 +401,10 @@ export default function App() {
           onExportWorkspace={exportWorkspace}
           onImportWorkspace={importWorkspace}
           onReanalyze={reanalyze}
+          onShareWorkspace={shareWorkspace}
           onViewChange={setActiveView}
           projectTitle={workspaceState.project.title}
+          sharedMode={Boolean(sharedWorkspaceId)}
         />
         <input
           ref={workspaceImportInputRef}
@@ -366,6 +416,11 @@ export default function App() {
         {notice && (
           <div className="border-b border-emerald-100 bg-emerald-50 px-8 py-2 text-sm text-emerald-800">
             {notice}
+          </div>
+        )}
+        {sharedWorkspaceId && (
+          <div className="border-b border-blue-100 bg-blue-50 px-8 py-2 text-sm text-blue-800">
+            팀 공유 워크스페이스입니다. 투표와 익명 의견이 참여자 전체 기준으로 집계됩니다. 문서 편집은 이 브라우저에만 유지됩니다.
           </div>
         )}
         {activeView === 'merge' && workspaceState.analysisResult?.source === 'local_harness' && (

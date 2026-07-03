@@ -21,6 +21,10 @@ function createPrismaClient() {
   return new PrismaClient({ adapter });
 }
 
+export function isDatabaseConfigured() {
+  return Boolean(process.env.DATABASE_URL);
+}
+
 export function getDb() {
   if (!globalForPrisma.prisma) {
     globalForPrisma.prisma = createPrismaClient();

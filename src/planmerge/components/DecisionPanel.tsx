@@ -21,12 +21,34 @@ import {
   saveOpinionClusterState,
 } from '../lib/ai/opinionClustering';
 import type { OpinionClusteringResult } from '../lib/ai/opinionClustering';
+import {
+  fetchBlockParticipation,
+  submitSharedOpinion,
+  submitSharedVote,
+} from '../lib/sharedWorkspaceClient';
+import type { SharedParticipation } from '../lib/sharedWorkspaceClient';
 
 type DecisionPanelProps = {
   selectedSection: DocumentSectionData;
   analysisRunId: number;
+  sharedWorkspaceId?: string | null;
   onApplyDecisionOption?: (decisionBlockId: string, optionId: string) => void;
 };
+
+function toSharedDecisionVote(
+  participation: SharedParticipation | null,
+  voterKey: string,
+): DecisionVote | undefined {
+  if (!participation) {
+    return undefined;
+  }
+
+  return {
+    voterKey,
+    selectedOptionId: participation.myOptionId,
+    overrides: participation.votes,
+  };
+}
 
 function SourceChips({ opinion }: { opinion: DecisionOpinion }) {
   const excerpts = opinion.sources.filter((source) => source.sourceExcerpt);
@@ -85,10 +107,12 @@ function SelectedSources({ trace }: { trace: DecisionTrace }) {
 function AnonymousVotePanel({
   trace,
   votes,
+  shared,
   onVote,
 }: {
   trace: DecisionTrace;
   votes?: DecisionVote;
+  shared?: boolean;
   onVote: (optionId: string) => void;
 }) {
   const options = useMemo(() => buildVoteOptions(trace), [trace]);
@@ -139,7 +163,9 @@ function AnonymousVotePanel({
         })}
       </div>
       <p className="mt-2 text-xs text-gray-400">
-        투표는 익명으로 이 브라우저에만 저장됩니다. 같은 섹션에서는 선택을 바꿀 수 있습니다.
+        {shared
+          ? '투표는 익명으로 참여자 전체 기준으로 집계됩니다. 같은 섹션에서는 선택을 바꿀 수 있습니다.'
+          : '투표는 익명으로 이 브라우저에만 저장됩니다. 같은 섹션에서는 선택을 바꿀 수 있습니다.'}
       </p>
     </div>
   );
@@ -336,30 +362,107 @@ function ApplyOptionButton({
   );
 }
 
-export function DecisionPanel({ selectedSection, analysisRunId, onApplyDecisionOption }: DecisionPanelProps) {
+export function DecisionPanel({
+  selectedSection,
+  analysisRunId,
+  sharedWorkspaceId,
+  onApplyDecisionOption,
+}: DecisionPanelProps) {
   const trace = getDecisionTrace(selectedSection);
   const [anonymousClientId] = useState(() => getAnonymousClientId());
   const [participationState, setParticipationState] = useState<ParticipationState>(() =>
     loadParticipationState(analysisRunId),
   );
+  const [sharedParticipationByBlock, setSharedParticipationByBlock] =
+    useState<Record<string, SharedParticipation>>({});
+  const [sharedActionPending, setSharedActionPending] = useState(false);
+  const sharedParticipation = sharedParticipationByBlock[trace.decisionBlockId] ?? null;
+
+  const applySharedParticipation = (decisionBlockId: string, participation: SharedParticipation) => {
+    setSharedParticipationByBlock((current) => ({
+      ...current,
+      [decisionBlockId]: participation,
+    }));
+  };
   const [clusterResults, setClusterResults] = useState(() => loadOpinionClusterState(analysisRunId));
   const [clusterLoadingByBlock, setClusterLoadingByBlock] = useState<Record<string, boolean>>({});
   const [draftOpinions, setDraftOpinions] = useState<Record<string, string>>({});
 
-  const decisionVote = participationState.votesByDecisionBlock[trace.decisionBlockId];
-  const decisionOpinions = participationState.opinionsByDecisionBlock[trace.decisionBlockId] ?? trace.opinions;
+  const decisionVote = sharedWorkspaceId
+    ? toSharedDecisionVote(sharedParticipation, anonymousClientId)
+    : participationState.votesByDecisionBlock[trace.decisionBlockId];
+  const decisionOpinions = sharedWorkspaceId
+    ? sharedParticipation?.opinions ?? []
+    : participationState.opinionsByDecisionBlock[trace.decisionBlockId] ?? trace.opinions;
   const decisionClusterResult = clusterResults.resultsByDecisionBlock[trace.decisionBlockId];
   const draftOpinion = draftOpinions[trace.decisionBlockId] ?? '';
 
   useEffect(() => {
+    // 공유 모드에서는 서버가 단일 소스이므로 로컬 참여 상태를 건드리지 않는다.
+    if (sharedWorkspaceId) {
+      return;
+    }
+
     saveParticipationState(participationState);
-  }, [participationState]);
+  }, [sharedWorkspaceId, participationState]);
 
   useEffect(() => {
     saveOpinionClusterState(clusterResults);
   }, [clusterResults]);
 
+  useEffect(() => {
+    if (!sharedWorkspaceId) {
+      return;
+    }
+
+    let cancelled = false;
+    const decisionBlockId = trace.decisionBlockId;
+
+    void (async () => {
+      const participation = await fetchBlockParticipation(
+        sharedWorkspaceId,
+        decisionBlockId,
+        anonymousClientId,
+      );
+
+      if (!cancelled && participation) {
+        setSharedParticipationByBlock((current) => ({
+          ...current,
+          [decisionBlockId]: participation,
+        }));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sharedWorkspaceId, trace.decisionBlockId, anonymousClientId]);
+
   const handleVote = (optionId: string) => {
+    if (sharedWorkspaceId) {
+      if (sharedActionPending) {
+        return;
+      }
+
+      setSharedActionPending(true);
+      void (async () => {
+        const participation = await submitSharedVote(
+          sharedWorkspaceId,
+          trace.decisionBlockId,
+          optionId,
+          anonymousClientId,
+        );
+
+        if (participation) {
+          applySharedParticipation(trace.decisionBlockId, participation);
+        }
+
+        setSharedActionPending(false);
+      })();
+
+      return;
+    }
+
     setParticipationState((current) => {
       const previous = current.votesByDecisionBlock[trace.decisionBlockId];
       const nextVote = voteOnOption(trace, previous, optionId, anonymousClientId);
@@ -386,6 +489,38 @@ export function DecisionPanel({ selectedSection, analysisRunId, onApplyDecisionO
       return;
     }
 
+    const clearDraft = () => {
+      setDraftOpinions((current) => ({
+        ...current,
+        [trace.decisionBlockId]: '',
+      }));
+    };
+
+    if (sharedWorkspaceId) {
+      if (sharedActionPending) {
+        return;
+      }
+
+      setSharedActionPending(true);
+      void (async () => {
+        const participation = await submitSharedOpinion(
+          sharedWorkspaceId,
+          trace.decisionBlockId,
+          content,
+          anonymousClientId,
+        );
+
+        if (participation) {
+          applySharedParticipation(trace.decisionBlockId, participation);
+          clearDraft();
+        }
+
+        setSharedActionPending(false);
+      })();
+
+      return;
+    }
+
     setParticipationState((current) => ({
       ...current,
       analysisRunId,
@@ -400,10 +535,7 @@ export function DecisionPanel({ selectedSection, analysisRunId, onApplyDecisionO
       },
     }));
 
-    setDraftOpinions((current) => ({
-      ...current,
-      [trace.decisionBlockId]: '',
-    }));
+    clearDraft();
   };
 
   const handleClusterGenerate = async () => {
@@ -472,7 +604,12 @@ export function DecisionPanel({ selectedSection, analysisRunId, onApplyDecisionO
           <SelectedSources trace={trace} />
         </div>
 
-        <AnonymousVotePanel trace={trace} votes={decisionVote} onVote={handleVote} />
+        <AnonymousVotePanel
+          trace={trace}
+          votes={decisionVote}
+          shared={Boolean(sharedWorkspaceId)}
+          onVote={handleVote}
+        />
 
         <OpinionClusterPanel
           clusterResult={decisionClusterResult}
