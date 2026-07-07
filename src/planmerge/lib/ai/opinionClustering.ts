@@ -253,6 +253,8 @@ export function buildOpinionClusteringPrompt(payload: OpinionClusteringPayload) 
     '7. If an opinion does not fit with others, create a standalone cluster.',
     '8. Do not change the selected option.',
     '9. relatedOptionText must be one of the provided option texts or null.',
+    '10. Each cluster must contain a single stance; split same-topic opinions by stance.',
+    '11. Impact reflects the weight of the content, not the number of opinions; one critical risk outweighs several wording preferences.',
     '',
     'Return shape:',
     JSON.stringify({
