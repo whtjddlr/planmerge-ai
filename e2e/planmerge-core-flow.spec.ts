@@ -19,6 +19,7 @@ test.describe.serial('PlanMerge keyless fallback core flow', () => {
     await expect(page.getByRole('heading', { level: 2, name: /^새 병합 프로젝트 만들기$/ })).toBeVisible();
 
     await page.getByRole('button', { name: /^검증 샘플 바로 열기$/ }).click();
+    await expect(page.getByTestId('workspace-switcher')).toContainText('검증 샘플');
     await expect(page.getByRole('heading', { level: 1, name: /^병합 결과$/ })).toBeVisible();
     await expect(page.getByRole('heading', {
       level: 1,

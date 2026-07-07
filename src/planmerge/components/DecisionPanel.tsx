@@ -6,6 +6,7 @@ import { getAnonymousClientId } from '../lib/anonymousClient';
 import {
   addAnonymousOpinion,
   buildVoteOptions,
+  createEmptyParticipationState,
   getTotalVotes,
   getVoteCount,
   groupLabel,
@@ -13,7 +14,7 @@ import {
   saveParticipationState,
   voteOnOption,
 } from '../lib/decisionParticipation';
-import type { DecisionVote, ParticipationState } from '../lib/decisionParticipation';
+import type { DecisionVote, ParticipationState, ParticipationStateScope } from '../lib/decisionParticipation';
 import {
   createOpinionClusteringPayload,
   generateOpinionClusters,
@@ -32,6 +33,7 @@ import type { SharedParticipation } from '../lib/sharedWorkspaceClient';
 type DecisionPanelProps = {
   selectedSection: DocumentSectionData;
   analysisRunId: number;
+  localWorkspaceId: string | null;
   sharedWorkspaceId?: string | null;
   onApplyDecisionOption?: (decisionBlockId: string, optionId: string) => void;
 };
@@ -367,6 +369,7 @@ function ApplyOptionButton({
 export function DecisionPanel({
   selectedSection,
   analysisRunId,
+  localWorkspaceId,
   sharedWorkspaceId,
   onApplyDecisionOption,
 }: DecisionPanelProps) {
@@ -377,18 +380,21 @@ export function DecisionPanel({
   const trace = traces.find(
     (candidate) => candidate.decisionBlockId === activeBlockIdBySection[selectedSection.number],
   ) ?? traces[0];
+  const localParticipationScope: ParticipationStateScope = `local:${localWorkspaceId ?? 'pending'}`;
+  const clusterStorageScope: OpinionClusterStateScope = sharedWorkspaceId
+    ? `shared:${sharedWorkspaceId}`
+    : `local:${localWorkspaceId ?? 'pending'}`;
   const [anonymousClientId] = useState(() => getAnonymousClientId());
   const [participationState, setParticipationState] = useState<ParticipationState>(() =>
-    loadParticipationState(analysisRunId),
+    sharedWorkspaceId
+      ? createEmptyParticipationState(analysisRunId)
+      : loadParticipationState(analysisRunId, localParticipationScope),
   );
   const [sharedParticipationByBlock, setSharedParticipationByBlock] =
     useState<Record<string, SharedParticipation>>({});
   const [sharedActionPending, setSharedActionPending] = useState(false);
   const [sharedActionError, setSharedActionError] = useState<string | null>(null);
   const sharedParticipation = sharedParticipationByBlock[trace.decisionBlockId] ?? null;
-  const clusterStorageScope: OpinionClusterStateScope = sharedWorkspaceId
-    ? `shared:${sharedWorkspaceId}`
-    : 'local';
 
   const applySharedParticipation = useCallback((decisionBlockId: string, participation: SharedParticipation) => {
     setSharedActionError(null);
@@ -417,8 +423,8 @@ export function DecisionPanel({
       return;
     }
 
-    saveParticipationState(participationState);
-  }, [sharedWorkspaceId, participationState]);
+    saveParticipationState(participationState, localParticipationScope);
+  }, [localParticipationScope, sharedWorkspaceId, participationState]);
 
   useEffect(() => {
     saveOpinionClusterState(clusterResults, clusterStorageScope);

@@ -191,7 +191,7 @@ const CATEGORY_KEYWORDS: Array<{
 
 const OPINION_CLUSTER_STORAGE_KEY = 'planmerge_opinion_clusters_v1';
 
-export type OpinionClusterStateScope = 'local' | `shared:${string}`;
+export type OpinionClusterStateScope = `local:${string}` | `shared:${string}`;
 
 export type OpinionClusterState = {
   analysisRunId: number;
@@ -524,8 +524,8 @@ export async function generateOpinionClusters(payload: OpinionClusteringPayload)
 }
 
 export function loadOpinionClusterState(
-  analysisRunId = 0,
-  scope: OpinionClusterStateScope = 'local',
+  analysisRunId: number,
+  scope: OpinionClusterStateScope,
 ): OpinionClusterState {
   if (typeof window === 'undefined') {
     return createEmptyOpinionClusterState(analysisRunId);
@@ -575,7 +575,7 @@ export function loadOpinionClusterState(
 
 export function saveOpinionClusterState(
   state: OpinionClusterState,
-  scope: OpinionClusterStateScope = 'local',
+  scope: OpinionClusterStateScope,
 ) {
   if (typeof window === 'undefined') {
     return;

@@ -1,6 +1,14 @@
 'use client';
 
-import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  type ChangeEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Toolbar } from './components/Toolbar';
 import { DocumentContent } from './components/DocumentContent';
@@ -11,16 +19,31 @@ import { ProjectSetupPage } from './components/pages/ProjectSetupPage';
 import { AnalysisInspectorPage } from './components/pages/AnalysisInspectorPage';
 import type { AppView } from './types/navigation';
 import {
+  activateWorkspaceEntry,
+  createEmptyWorkspaceState,
   createWorkspaceExport,
+  createWorkspaceEntry,
   createDraftSubmission,
   createSampleWorkspaceState,
-  defaultWorkspaceState,
+  deleteWorkspaceEntry,
+  getServerWorkspaceRegistrySnapshot,
+  getServerWorkspaceStorageFailureNoticeSnapshot,
+  getWorkspaceRegistrySnapshot,
+  getWorkspaceStorageFailureNoticeSnapshot,
   isSampleWorkspaceState,
-  loadWorkspaceState,
+  loadLocalWorkspaceSession,
   parseWorkspaceImport,
+  SAMPLE_WORKSPACE_ID,
   saveWorkspaceState,
+  subscribeWorkspaceRegistry,
+  subscribeWorkspaceStorageFailures,
 } from './lib/localWorkspace';
-import type { DraftFormInput, LocalDecisionLog, ProjectSettings } from './lib/localWorkspace';
+import type {
+  DraftFormInput,
+  LocalDecisionLog,
+  LocalWorkspaceSession,
+  ProjectSettings,
+} from './lib/localWorkspace';
 import { generatePlanMergeAnalysis } from './lib/ai/planmergeAnalysisClient';
 import { createSharedWorkspace, fetchSharedWorkspace, revokeSharedWorkspace } from './lib/sharedWorkspaceClient';
 import {
@@ -46,7 +69,8 @@ export default function App() {
   const [activeView, setActiveView] = useState<AppView>('setup');
   const [activeSection, setActiveSection] = useState(7);
   const [analysisStatus, setAnalysisStatus] = useState<AnalysisStatus>('idle');
-  const [workspaceState, setWorkspaceState] = useState(defaultWorkspaceState);
+  const [workspaceState, setWorkspaceState] = useState(createEmptyWorkspaceState);
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
   const [hasLoadedWorkspace, setHasLoadedWorkspace] = useState(false);
   const [sharedWorkspaceId, setSharedWorkspaceId] = useState<string | null>(null);
   const [sharedWorkspaceLink, setSharedWorkspaceLink] = useState<string | null>(null);
@@ -54,6 +78,17 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const noticeTimeoutRef = useRef<number | null>(null);
   const workspaceImportInputRef = useRef<HTMLInputElement | null>(null);
+  const workspaceRegistry = useSyncExternalStore(
+    subscribeWorkspaceRegistry,
+    getWorkspaceRegistrySnapshot,
+    getServerWorkspaceRegistrySnapshot,
+  );
+  const storageFailureNotice = useSyncExternalStore(
+    subscribeWorkspaceStorageFailures,
+    getWorkspaceStorageFailureNoticeSnapshot,
+    getServerWorkspaceStorageFailureNoticeSnapshot,
+  );
+  const displayedNotice = storageFailureNotice ?? notice;
   const mergeSections = useMemo(
     () => createDocumentSectionsFromAnalysis(workspaceState.analysisResult, workspaceState.drafts),
     [workspaceState.analysisResult, workspaceState.drafts],
@@ -70,7 +105,10 @@ export default function App() {
   }, [activeSectionBlockIds, workspaceState.approvedBlockIds]);
   const displayedIdeaCount = workspaceState.analysisResult?.normalizedIdeas.length
     ?? mergeSections.filter((section) => section.content.trim()).length;
-  const sampleWorkspace = isSampleWorkspaceState(workspaceState);
+  const sampleWorkspace = activeWorkspaceId === SAMPLE_WORKSPACE_ID || isSampleWorkspaceState(workspaceState);
+  const workspaceScopeKey = sharedWorkspaceId
+    ? `shared:${sharedWorkspaceId}`
+    : `local:${activeWorkspaceId ?? 'pending'}`;
   const qualityLevel = useMemo<QualityLevel | null>(() => {
     if (!workspaceState.analysisResult) {
       return null;
@@ -94,6 +132,12 @@ export default function App() {
     }, 2400);
   }, []);
 
+  const applyLocalWorkspaceSession = useCallback((session: LocalWorkspaceSession) => {
+    setActiveWorkspaceId(session.activeWorkspaceId);
+    setWorkspaceState(session.state);
+    setAnalysisStatus(session.state.analysisResult ? 'completed' : 'idle');
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     const searchParams = new URLSearchParams(window.location.search);
@@ -101,10 +145,9 @@ export default function App() {
     const freshStart = searchParams.get('fresh') === '1';
 
     const loadLocal = () => {
-      const nextWorkspaceState = freshStart ? defaultWorkspaceState : loadWorkspaceState();
+      const session = loadLocalWorkspaceSession({ freshStart });
 
-      setWorkspaceState(nextWorkspaceState);
-      setAnalysisStatus(nextWorkspaceState.analysisResult ? 'completed' : 'idle');
+      applyLocalWorkspaceSession(session);
       setOwnedShareAccess(freshStart ? null : loadSharedWorkspaceOwnerAccess());
       setHasLoadedWorkspace(true);
     };
@@ -127,6 +170,7 @@ export default function App() {
 
         if (shared) {
           setSharedWorkspaceId(wsId);
+          setActiveWorkspaceId(null);
           setSharedWorkspaceLink(null);
           setOwnedShareAccess(loadSharedWorkspaceOwnerAccess(wsId));
           setWorkspaceState(shared.state);
@@ -155,22 +199,109 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [showNotice]);
+  }, [applyLocalWorkspaceSession, showNotice]);
 
   useEffect(() => {
     // 공유 모드에서는 남의 워크스페이스로 내 로컬 데이터를 덮어쓰지 않는다.
-    if (!hasLoadedWorkspace || sharedWorkspaceId) {
+    if (!hasLoadedWorkspace || sharedWorkspaceId || !activeWorkspaceId) {
       return;
     }
 
-    saveWorkspaceState(workspaceState);
-  }, [hasLoadedWorkspace, sharedWorkspaceId, workspaceState]);
+    saveWorkspaceState(activeWorkspaceId, workspaceState);
+  }, [activeWorkspaceId, hasLoadedWorkspace, sharedWorkspaceId, workspaceState]);
 
   useEffect(() => () => {
     if (noticeTimeoutRef.current) {
       window.clearTimeout(noticeTimeoutRef.current);
     }
   }, []);
+
+  const leaveSharedMode = () => {
+    setSharedWorkspaceId(null);
+    setSharedWorkspaceLink(null);
+    setOwnedShareAccess(null);
+    removeSharedWorkspaceIdFromUrl();
+  };
+
+  const persistActiveWorkspace = () => {
+    if (!activeWorkspaceId || sharedWorkspaceId) {
+      return true;
+    }
+
+    const saveResult = saveWorkspaceState(activeWorkspaceId, workspaceState);
+
+    if (!saveResult.saved) {
+      return false;
+    }
+
+    return true;
+  };
+
+  const createNewWorkspace = () => {
+    if (!persistActiveWorkspace()) {
+      return;
+    }
+
+    const state = createEmptyWorkspaceState();
+    const created = createWorkspaceEntry(state);
+
+    leaveSharedMode();
+    applyLocalWorkspaceSession({
+      activeWorkspaceId: created.workspaceId,
+      registry: created.registry,
+      state,
+    });
+    setActiveSection(7);
+    setActiveView('setup');
+
+    if (created.saved) {
+      showNotice('새 워크스페이스를 만들었습니다.');
+    }
+  };
+
+  const switchWorkspace = (workspaceId: string) => {
+    if (workspaceId === activeWorkspaceId) {
+      return;
+    }
+
+    if (!persistActiveWorkspace()) {
+      return;
+    }
+
+    const session = activateWorkspaceEntry(workspaceId);
+
+    if (!session) {
+      showNotice('워크스페이스 데이터를 찾지 못해 목록에서 제외했습니다.');
+      return;
+    }
+
+    leaveSharedMode();
+    applyLocalWorkspaceSession(session);
+    setActiveSection(7);
+    showNotice('워크스페이스를 전환했습니다.');
+  };
+
+  const deleteWorkspace = (workspaceId: string) => {
+    const metadata = workspaceRegistry.find((entry) => entry.id === workspaceId);
+    const title = workspaceId === SAMPLE_WORKSPACE_ID
+      ? '검증 샘플'
+      : metadata?.title.trim() || '워크스페이스';
+
+    if (!window.confirm(`${title} 워크스페이스를 삭제할까요? 이 브라우저의 저장 데이터에서만 삭제됩니다.`)) {
+      return;
+    }
+
+    const session = deleteWorkspaceEntry(workspaceId);
+
+    leaveSharedMode();
+
+    if (workspaceId === activeWorkspaceId) {
+      applyLocalWorkspaceSession(session);
+      setActiveSection(7);
+    }
+
+    showNotice('워크스페이스를 삭제했습니다.');
+  };
 
   const copyShareLink = async (url: string) => {
     try {
@@ -218,16 +349,28 @@ export default function App() {
   };
 
   const loadSampleWorkspace = () => {
-    const sampleWorkspace = createSampleWorkspaceState();
+    if (activeWorkspaceId !== SAMPLE_WORKSPACE_ID && !persistActiveWorkspace()) {
+      return;
+    }
 
-    setWorkspaceState(sampleWorkspace);
-    setSharedWorkspaceLink(null);
-    setSharedWorkspaceId(null);
-    setOwnedShareAccess(null);
-    setAnalysisStatus(sampleWorkspace.analysisResult ? 'completed' : 'idle');
+    const sampleWorkspace = createSampleWorkspaceState();
+    const created = createWorkspaceEntry(sampleWorkspace, {
+      workspaceId: SAMPLE_WORKSPACE_ID,
+      titleFallback: '검증 샘플',
+    });
+
+    leaveSharedMode();
+    applyLocalWorkspaceSession({
+      activeWorkspaceId: SAMPLE_WORKSPACE_ID,
+      registry: created.registry,
+      state: sampleWorkspace,
+    });
     setActiveSection(7);
     setActiveView('merge');
-    showNotice('샘플 워크스페이스를 불러왔습니다.');
+
+    if (created.saved) {
+      showNotice('샘플 워크스페이스를 불러왔습니다.');
+    }
   };
 
   const submitDraft = (draft: DraftFormInput) => {
@@ -408,12 +551,27 @@ export default function App() {
       return;
     }
 
-    setWorkspaceState(result.state);
-    setSharedWorkspaceLink(null);
-    setOwnedShareAccess(null);
-    setAnalysisStatus(result.state.analysisResult ? 'completed' : 'idle');
+    if (!persistActiveWorkspace()) {
+      return;
+    }
+
+    const created = createWorkspaceEntry(result.state, {
+      titleFallback: '가져온 워크스페이스',
+    });
+
+    leaveSharedMode();
+    applyLocalWorkspaceSession({
+      activeWorkspaceId: created.workspaceId,
+      registry: created.registry,
+      state: result.state,
+    });
     setActiveView('merge');
     setActiveSection(7);
+
+    if (!created.saved) {
+      return;
+    }
+
     showNotice(
       result.warnings.length
         ? `워크스페이스를 가져왔습니다. ${result.warnings.length}개 항목은 보정했습니다.`
@@ -536,9 +694,10 @@ export default function App() {
             localStorage에 저장돼 기존 투표/의견을 덮어쓴다. */}
         {hasLoadedWorkspace && (
           <DecisionPanel
-            key={`${sharedWorkspaceId ?? 'local'}:${workspaceState.analysisRunId}`}
+            key={`${workspaceScopeKey}:${workspaceState.analysisRunId}`}
             selectedSection={selectedSection}
             analysisRunId={workspaceState.analysisRunId}
+            localWorkspaceId={activeWorkspaceId}
             sharedWorkspaceId={sharedWorkspaceId}
             onApplyDecisionOption={applyDecisionOption}
           />
@@ -549,7 +708,17 @@ export default function App() {
 
   return (
     <div className="flex h-dvh w-full min-w-0 flex-col bg-white md:flex-row">
-      <Sidebar activeView={activeView} analysisStatus={analysisStatus} onViewChange={setActiveView} />
+      <Sidebar
+        activeView={activeView}
+        activeWorkspaceId={activeWorkspaceId}
+        analysisStatus={analysisStatus}
+        sharedMode={Boolean(sharedWorkspaceId)}
+        workspaces={workspaceRegistry}
+        onCreateWorkspace={createNewWorkspace}
+        onDeleteWorkspace={deleteWorkspace}
+        onSwitchWorkspace={switchWorkspace}
+        onViewChange={setActiveView}
+      />
       <div className="flex-1 min-w-0 flex flex-col">
         <Toolbar
           activeView={activeView}
@@ -578,12 +747,12 @@ export default function App() {
           className="hidden"
           onChange={importWorkspaceFile}
         />
-        {notice && (
+        {displayedNotice && (
           <div
             data-testid="app-notice"
             className="border-b border-emerald-100 bg-emerald-50 px-8 py-2 text-sm text-emerald-800"
           >
-            {notice}
+            {displayedNotice}
           </div>
         )}
         {sharedWorkspaceLink && (

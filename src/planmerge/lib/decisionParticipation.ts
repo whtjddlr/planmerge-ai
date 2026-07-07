@@ -2,6 +2,8 @@ import type { AnonymousOpinion, DecisionTrace } from '../data/mergeResult';
 
 const PARTICIPATION_STORAGE_KEY = 'planmerge_decision_participation_v1';
 
+export type ParticipationStateScope = `local:${string}`;
+
 export type VoteGroup = 'selected' | 'alternative' | 'conflict';
 
 export type VoteOption = {
@@ -130,12 +132,15 @@ export function addAnonymousOpinion(
   return [nextOpinion, ...(currentOpinions ?? trace.opinions)];
 }
 
-export function loadParticipationState(analysisRunId = 0) {
+export function loadParticipationState(
+  analysisRunId: number,
+  scope: ParticipationStateScope,
+) {
   if (typeof window === 'undefined') {
     return createEmptyParticipationState(analysisRunId);
   }
 
-  const rawState = window.localStorage.getItem(PARTICIPATION_STORAGE_KEY);
+  const rawState = window.localStorage.getItem(participationStorageKey(scope));
 
   if (!rawState) {
     return createEmptyParticipationState(analysisRunId);
@@ -159,10 +164,21 @@ export function loadParticipationState(analysisRunId = 0) {
   }
 }
 
-export function saveParticipationState(state: ParticipationState) {
+export function saveParticipationState(
+  state: ParticipationState,
+  scope: ParticipationStateScope,
+) {
   if (typeof window === 'undefined') {
     return;
   }
 
-  window.localStorage.setItem(PARTICIPATION_STORAGE_KEY, JSON.stringify(state));
+  try {
+    window.localStorage.setItem(participationStorageKey(scope), JSON.stringify(state));
+  } catch (error) {
+    console.warn('참여 상태 저장에 실패했습니다:', error);
+  }
+}
+
+function participationStorageKey(scope: ParticipationStateScope) {
+  return `${PARTICIPATION_STORAGE_KEY}:${scope}`;
 }
