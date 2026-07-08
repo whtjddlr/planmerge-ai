@@ -75,6 +75,12 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - 스키마 변경은 마이그레이션 파일 없이 `npx prisma db push`로 적용하며, 새 컬럼을 쓰는 코드 배포 전에 운영 DB에 먼저 반영해야 한다.
 - DB 미설정 환경이 정상 상태다: API는 `isDatabaseConfigured()`로 가드하고 503을 반환한다. 새 API도 같은 패턴을 지킨다.
 
+### Auth
+- Auth.js v5(`next-auth`) App Router 관례를 따른다: `src/auth.ts`에서 `NextAuth({...})`로 `{ handlers, auth, signIn, signOut }`를 내보내고, JWT 세션 전략을 사용한다.
+- 게스트 모드가 기본이다. 기존 분석, 편집, 내보내기, 공유 시도 흐름에 로그인 게이트를 추가하지 않는다.
+- `AUTH_TEST_LOGIN=1`은 E2E 전용 Credentials provider를 켜는 스위치이며 프로덕션에서 금지한다.
+- Auth 스키마(User/Account)는 마이그레이션 파일 없이 Neon SQL Editor 또는 `npx prisma db push`로 적용한다.
+
 ### GMS API
 - 엔드포인트: OpenAI 호환 Responses API (`GMS_API_URL`, 기본 `https://gms.ssafy.io/gmsapi/api.openai.com/v1/responses`), 모델 기본 `gpt-4.1`(`GMS_DEFAULT_MODEL` → `MODEL_NAME` 순 폴백).
 - `callGmsJson`은 `temperature 0.1`, `json_object` 포맷, 60초 타임아웃. 구조화 출력은 JSON Schema 강제가 아니라 **프롬프트 + 수기 검증기** 조합이다.

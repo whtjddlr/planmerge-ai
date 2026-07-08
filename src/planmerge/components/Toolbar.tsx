@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { AuthControl } from './AuthControl';
 import type { AppView } from '../types/navigation';
 import type { QualityLevel } from '../lib/analysisQuality';
 
@@ -134,97 +135,100 @@ export function Toolbar({
           <h1 className="text-lg text-gray-900 mb-1">{copy.title}</h1>
           <div className="text-sm text-gray-600">{copy.subtitle}</div>
         </div>
-        <div ref={menuContainerRef} className="relative flex flex-shrink-0 items-center gap-2">
-          <button
-            type="button"
-            className="px-3 py-1.5 rounded-md text-sm text-gray-600 hover:bg-gray-100 transition-colors"
-            aria-label="추가 작업"
-            aria-expanded={menuOpen}
-            onClick={() => setMenuOpen((open) => !open)}
-          >
-            •••
-          </button>
-          {activeView === 'merge' && hasMergeResult && !sharedMode && (
+        <div className="flex flex-shrink-0 flex-wrap items-center justify-end gap-2">
+          <div ref={menuContainerRef} className="relative flex flex-shrink-0 items-center gap-2">
             <button
               type="button"
-              className={`px-4 py-1.5 rounded-md text-sm text-white transition-colors ${
-                approvalStatus === 'approved'
-                  ? 'bg-emerald-600 hover:bg-emerald-700'
-                  : 'bg-blue-600 hover:bg-blue-700'
-              } disabled:cursor-not-allowed disabled:bg-gray-300`}
-              disabled={analysisStatus === 'analyzing' || qualityGateBlocked}
-              title={qualityGateBlocked ? qualityGateBlockedTitle : undefined}
-              onClick={onApprove}
+              className="px-3 py-1.5 rounded-md text-sm text-gray-600 hover:bg-gray-100 transition-colors"
+              aria-label="추가 작업"
+              aria-expanded={menuOpen}
+              onClick={() => setMenuOpen((open) => !open)}
             >
-              {approvalStatus === 'approved' ? '승인 완료' : '선택안 승인'}
+              •••
             </button>
-          )}
-          {menuOpen && (
-            <div className="absolute right-0 top-10 z-10 w-56 rounded-md border border-gray-200 bg-white p-1 shadow-lg">
-              {!sharedMode && (
-                <>
-                  <button
-                    type="button"
-                    className="w-full whitespace-nowrap rounded px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
-                    onClick={() => runMenuAction(() => onViewChange('drafts'))}
-                  >
-                    초안 추가
-                  </button>
-                  <button
-                    type="button"
-                    className="w-full whitespace-nowrap rounded px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-wait disabled:text-gray-400"
-                    disabled={analysisStatus === 'analyzing'}
-                    onClick={() => runMenuAction(onReanalyze)}
-                  >
-                    {analysisStatus === 'analyzing' ? '분석 중' : '다시 분석'}
-                  </button>
-                </>
-              )}
-              {!sharedMode && (
-                <button
-                  type="button"
-                  className="w-full whitespace-nowrap rounded px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400"
-                  disabled={shareDisabled}
-                  title={shareDisabledTitle}
-                  onClick={() => runMenuAction(onShareWorkspace)}
-                >
-                  팀 공유 링크 만들기
-                </button>
-              )}
-              {canRevokeSharedWorkspace && (
-                <button
-                  type="button"
-                  className="w-full whitespace-nowrap rounded px-3 py-2 text-left text-sm text-red-700 hover:bg-red-50"
-                  onClick={() => runMenuAction(onRevokeSharedWorkspace)}
-                >
-                  공유 링크 회수
-                </button>
-              )}
+            {activeView === 'merge' && hasMergeResult && !sharedMode && (
               <button
                 type="button"
-                className="w-full whitespace-nowrap rounded px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
-                onClick={() => runMenuAction(onExportMarkdown)}
+                className={`px-4 py-1.5 rounded-md text-sm text-white transition-colors ${
+                  approvalStatus === 'approved'
+                    ? 'bg-emerald-600 hover:bg-emerald-700'
+                    : 'bg-blue-600 hover:bg-blue-700'
+                } disabled:cursor-not-allowed disabled:bg-gray-300`}
+                disabled={analysisStatus === 'analyzing' || qualityGateBlocked}
+                title={qualityGateBlocked ? qualityGateBlockedTitle : undefined}
+                onClick={onApprove}
               >
-                Markdown 내보내기
+                {approvalStatus === 'approved' ? '승인 완료' : '선택안 승인'}
               </button>
-              <button
-                type="button"
-                className="w-full whitespace-nowrap rounded px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
-                onClick={() => runMenuAction(onExportWorkspace)}
-              >
-                워크스페이스 내보내기
-              </button>
-              {!sharedMode && (
+            )}
+            {menuOpen && (
+              <div className="absolute right-0 top-10 z-10 w-56 rounded-md border border-gray-200 bg-white p-1 shadow-lg">
+                {!sharedMode && (
+                  <>
+                    <button
+                      type="button"
+                      className="w-full whitespace-nowrap rounded px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                      onClick={() => runMenuAction(() => onViewChange('drafts'))}
+                    >
+                      초안 추가
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full whitespace-nowrap rounded px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-wait disabled:text-gray-400"
+                      disabled={analysisStatus === 'analyzing'}
+                      onClick={() => runMenuAction(onReanalyze)}
+                    >
+                      {analysisStatus === 'analyzing' ? '분석 중' : '다시 분석'}
+                    </button>
+                  </>
+                )}
+                {!sharedMode && (
+                  <button
+                    type="button"
+                    className="w-full whitespace-nowrap rounded px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400"
+                    disabled={shareDisabled}
+                    title={shareDisabledTitle}
+                    onClick={() => runMenuAction(onShareWorkspace)}
+                  >
+                    팀 공유 링크 만들기
+                  </button>
+                )}
+                {canRevokeSharedWorkspace && (
+                  <button
+                    type="button"
+                    className="w-full whitespace-nowrap rounded px-3 py-2 text-left text-sm text-red-700 hover:bg-red-50"
+                    onClick={() => runMenuAction(onRevokeSharedWorkspace)}
+                  >
+                    공유 링크 회수
+                  </button>
+                )}
                 <button
                   type="button"
                   className="w-full whitespace-nowrap rounded px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
-                  onClick={() => runMenuAction(onImportWorkspace)}
+                  onClick={() => runMenuAction(onExportMarkdown)}
                 >
-                  워크스페이스 가져오기
+                  Markdown 내보내기
                 </button>
-              )}
-            </div>
-          )}
+                <button
+                  type="button"
+                  className="w-full whitespace-nowrap rounded px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                  onClick={() => runMenuAction(onExportWorkspace)}
+                >
+                  워크스페이스 내보내기
+                </button>
+                {!sharedMode && (
+                  <button
+                    type="button"
+                    className="w-full whitespace-nowrap rounded px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                    onClick={() => runMenuAction(onImportWorkspace)}
+                  >
+                    워크스페이스 가져오기
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+          <AuthControl />
         </div>
       </div>
     </div>
