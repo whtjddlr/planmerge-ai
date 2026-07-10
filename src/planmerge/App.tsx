@@ -2,6 +2,7 @@
 
 import {
   type ChangeEvent,
+  type ReactNode,
   useCallback,
   useEffect,
   useMemo,
@@ -9,6 +10,19 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react';
+import {
+  ArrowRight,
+  CheckCircle2,
+  Clipboard,
+  FileText,
+  GitMerge,
+  Loader2,
+  RefreshCw,
+  Share2,
+  ShieldCheck,
+  UploadCloud,
+  X,
+} from 'lucide-react';
 import { Sidebar } from './components/Sidebar';
 import { Toolbar } from './components/Toolbar';
 import { DocumentContent } from './components/DocumentContent';
@@ -42,6 +56,7 @@ import {
 import type {
   DraftFormInput,
   LocalDecisionLog,
+  LocalWorkspaceState,
   LocalWorkspaceSession,
   ProjectSettings,
 } from './lib/localWorkspace';
@@ -62,14 +77,14 @@ import {
 import type { SharedWorkspaceOwnerAccess } from './lib/sharedWorkspaceOwnerStore';
 import { createDocumentSectionsFromAnalysis } from './lib/analysisViewModel';
 import { applyDecisionOptionOverride } from './lib/analysisOverride';
-import { evaluateAnalysisQuality, type QualityLevel } from './lib/analysisQuality';
+import { evaluateAnalysisQuality } from './lib/analysisQuality';
 import { buildMarkdownExport } from './lib/exportMarkdown';
+import { evaluatePublicationReadiness } from './lib/publicationReadiness';
 import {
   documentSectionDefinitions,
   type ProtocolDecisionBlock,
   type ProtocolDecisionOption,
 } from './lib/ai/planmergeProtocol';
-import type { DocumentSectionData } from './data/mergeResult';
 
 type AnalysisStatus = 'idle' | 'analyzing' | 'completed';
 
@@ -90,6 +105,7 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const noticeTimeoutRef = useRef<number | null>(null);
   const workspaceImportInputRef = useRef<HTMLInputElement | null>(null);
+  const contentViewportRef = useRef<HTMLDivElement | null>(null);
   const workspaceRegistry = useSyncExternalStore(
     subscribeWorkspaceRegistry,
     getWorkspaceRegistrySnapshot,
@@ -106,15 +122,6 @@ export default function App() {
     [workspaceState.analysisResult, workspaceState.drafts],
   );
   const selectedSection = mergeSections.find((section) => section.number === activeSection) ?? mergeSections[0];
-  const activeSectionBlockIds = useMemo(() => getSectionDecisionBlockIds(selectedSection), [selectedSection]);
-  const approvalStatus = useMemo(() => {
-    const approvedBlockIds = new Set(workspaceState.approvedBlockIds ?? []);
-
-    return activeSectionBlockIds.length > 0 &&
-      activeSectionBlockIds.every((blockId) => approvedBlockIds.has(blockId))
-      ? 'approved'
-      : 'pending';
-  }, [activeSectionBlockIds, workspaceState.approvedBlockIds]);
   const displayedIdeaCount = workspaceState.analysisResult?.normalizedIdeas.length
     ?? mergeSections.filter((section) => section.content.trim()).length;
   const sampleWorkspace = activeWorkspaceId === SAMPLE_WORKSPACE_ID || isSampleWorkspaceState(workspaceState);
@@ -123,16 +130,23 @@ export default function App() {
     : `local:${activeWorkspaceId ?? 'pending'}`;
   const sharedMode = Boolean(sharedWorkspaceId);
   const effectiveActiveView = sharedMode && isSharedRestrictedView(activeView) ? 'merge' : activeView;
-  const qualityLevel = useMemo<QualityLevel | null>(() => {
+  const qualityReport = useMemo(() => {
     if (!workspaceState.analysisResult) {
-      return null;
+      return undefined;
     }
 
     return evaluateAnalysisQuality(
       { project: workspaceState.project, drafts: workspaceState.drafts },
       workspaceState.analysisResult,
-    ).level;
-  }, [workspaceState.analysisResult, workspaceState.drafts, workspaceState.project]);
+      workspaceState.approvedBlockIds,
+    );
+  }, [workspaceState.analysisResult, workspaceState.approvedBlockIds, workspaceState.drafts, workspaceState.project]);
+  const qualityLevel = qualityReport?.level ?? null;
+  const publicationReadiness = useMemo(() => evaluatePublicationReadiness({
+    analysisResult: workspaceState.analysisResult,
+    approvedBlockIds: workspaceState.approvedBlockIds,
+    qualityLevel,
+  }), [qualityLevel, workspaceState.analysisResult, workspaceState.approvedBlockIds]);
 
   const showNotice = useCallback((message: string) => {
     setNotice(message);
@@ -151,6 +165,10 @@ export default function App() {
     setWorkspaceState(session.state);
     setAnalysisStatus(session.state.analysisResult ? 'completed' : 'idle');
   }, []);
+
+  useEffect(() => {
+    contentViewportRef.current?.scrollTo({ top: 0, left: 0 });
+  }, [effectiveActiveView, workspaceScopeKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -346,7 +364,7 @@ export default function App() {
     setActiveView(view);
   };
 
-  const approveDecision = () => {
+  const approveDecisionBlock = (decisionBlockId: string) => {
     if (sharedWorkspaceId) {
       showNotice(SHARED_READ_ONLY_NOTICE);
       return;
@@ -361,16 +379,23 @@ export default function App() {
       return;
     }
 
-    if (!activeSectionBlockIds.length) {
+    const block = workspaceState.analysisResult?.decisionBlocks.find((item) => item.id === decisionBlockId);
+
+    if (!block) {
       showNotice('승인할 선택안을 찾지 못했습니다.');
+      return;
+    }
+
+    if (workspaceState.approvedBlockIds?.includes(decisionBlockId)) {
+      showNotice('이미 승인한 결정입니다.');
       return;
     }
 
     setWorkspaceState((current) => ({
       ...current,
-      approvedBlockIds: mergeApprovedBlockIds(current.approvedBlockIds, activeSectionBlockIds),
+      approvedBlockIds: mergeApprovedBlockIds(current.approvedBlockIds, [decisionBlockId]),
     }));
-    showNotice(`${selectedSection.title} 선택안을 승인했습니다.`);
+    showNotice(`${getProtocolSectionTitle(block.sectionKey)} · ${block.topic} 선택안을 승인했습니다.`);
   };
 
   const saveProject = (project: ProjectSettings) => {
@@ -379,10 +404,11 @@ export default function App() {
       return;
     }
 
-    setWorkspaceState((current) => ({
+    setWorkspaceState((current) => clearStaleAnalysis({
       ...current,
       project,
     }));
+    setAnalysisStatus('idle');
     setActiveView('drafts');
     showNotice('프로젝트 설정을 저장했습니다.');
   };
@@ -424,7 +450,7 @@ export default function App() {
       return;
     }
 
-    setWorkspaceState((current) => ({
+    setWorkspaceState((current) => clearStaleAnalysis({
       ...current,
       approvedBlockIds: [],
       drafts: [
@@ -432,6 +458,7 @@ export default function App() {
         createDraftSubmission(draft, current.drafts.length),
       ],
     }));
+    setAnalysisStatus('idle');
     showNotice('초안을 저장했습니다. 다시 분석을 실행할 수 있습니다.');
   };
 
@@ -446,7 +473,7 @@ export default function App() {
       return false;
     }
 
-    setWorkspaceState((current) => ({
+    setWorkspaceState((current) => clearStaleAnalysis({
       ...current,
       approvedBlockIds: [],
       drafts: [
@@ -454,6 +481,7 @@ export default function App() {
         createDraftSubmission(draft, current.drafts.length),
       ],
     }));
+    setAnalysisStatus('idle');
     showNotice('공유 초안을 로컬 초안으로 가져왔습니다. 다시 분석을 실행할 수 있습니다.');
 
     return true;
@@ -465,11 +493,12 @@ export default function App() {
       return;
     }
 
-    setWorkspaceState((current) => ({
+    setWorkspaceState((current) => clearStaleAnalysis({
       ...current,
       approvedBlockIds: [],
       drafts: current.drafts.filter((draft) => draft.id !== draftId),
     }));
+    setAnalysisStatus('idle');
     showNotice('초안을 삭제했습니다. 다시 분석을 실행할 수 있습니다.');
   };
 
@@ -519,9 +548,11 @@ export default function App() {
 
   const exportMarkdown = () => {
     const markdown = buildMarkdownExport({
-      projectTitle: workspaceState.project.title,
+      project: workspaceState.project,
+      drafts: workspaceState.drafts,
       sections: mergeSections,
       analysisResult: workspaceState.analysisResult,
+      approvedBlockIds: workspaceState.approvedBlockIds,
     });
     const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -532,6 +563,24 @@ export default function App() {
     link.click();
     URL.revokeObjectURL(url);
     showNotice('Markdown 파일을 내보냈습니다.');
+  };
+
+  const handlePublicationPrimaryAction = () => {
+    if (!workspaceState.analysisResult) {
+      return;
+    }
+
+    if (publicationReadiness.level === 'ready') {
+      exportMarkdown();
+      return;
+    }
+
+    setActiveView(
+      publicationReadiness.level === 'blocked' || publicationReadiness.unresolvedCount === 0
+        ? 'inspector'
+        : 'openQuestions',
+    );
+    showNotice(publicationReadiness.detail);
   };
 
   const exportWorkspace = () => {
@@ -561,8 +610,8 @@ export default function App() {
       return;
     }
 
-    if (qualityLevel === 'blocked') {
-      showNotice('품질 게이트가 차단되어 공유 링크를 만들 수 없습니다.');
+    if (!publicationReadiness.canShare) {
+      showNotice(publicationReadiness.detail);
       return;
     }
 
@@ -756,14 +805,14 @@ export default function App() {
       return {
         ...current,
         analysisResult: applyDecisionOptionOverride(current.analysisResult, decisionBlockId, optionId),
-        approvedBlockIds: (current.approvedBlockIds ?? []).filter((blockId) => blockId !== decisionBlockId),
+        approvedBlockIds: mergeApprovedBlockIds(current.approvedBlockIds, [decisionBlockId]),
         decisionLogs: [
           ...current.decisionLogs,
           createDecisionOverrideLog(current.analysisRunId, block, beforeOption, targetOption),
         ],
       };
     });
-    showNotice('선택안을 변경하고 최종 문서 섹션에 반영했습니다.');
+    showNotice('선택안을 변경하고 승인 기록과 최종 문서에 반영했습니다.');
   };
 
   const renderContent = () => {
@@ -785,6 +834,7 @@ export default function App() {
           drafts={workspaceState.drafts}
           mode={sharedMode ? 'shared' : 'local'}
           ownerShareAccess={sharedMode ? null : ownedShareAccess}
+          project={workspaceState.project}
           sharedWorkspaceId={sharedWorkspaceId}
           onDeleteDraft={deleteDraft}
           onImportSharedDraft={importSharedDraft}
@@ -799,6 +849,7 @@ export default function App() {
         <OpenQuestionsPage
           documentSections={mergeSections}
           onSelectSection={selectSectionFromAnyView}
+          publicationReadiness={publicationReadiness}
         />
       );
     }
@@ -810,8 +861,10 @@ export default function App() {
           drafts={workspaceState.drafts}
           analysisResult={workspaceState.analysisResult}
           analysisStatus={analysisStatus}
+          approvedBlockIds={workspaceState.approvedBlockIds ?? []}
           decisionLogs={workspaceState.decisionLogs}
           onRunAnalysis={reanalyze}
+          publicationReadiness={publicationReadiness}
           readOnly={sharedMode}
         />
       );
@@ -841,10 +894,12 @@ export default function App() {
         <DocumentContent
           activeSection={activeSection}
           analysisResult={workspaceState.analysisResult}
+          approvedBlockIds={workspaceState.approvedBlockIds ?? []}
           documentSections={mergeSections}
           drafts={workspaceState.drafts}
           onSectionSelect={setActiveSection}
           project={workspaceState.project}
+          publicationReadiness={publicationReadiness}
         />
         {/* 워크스페이스 로드 전에 마운트하면 runId 0 기준의 빈 참여 상태가
             localStorage에 저장돼 기존 투표/의견을 덮어쓴다. */}
@@ -858,6 +913,9 @@ export default function App() {
             sharedSnapshotVersion={sharedWorkspaceSnapshotVersion}
             ownerShareAccess={sharedMode ? null : ownedShareAccess}
             onApplyDecisionOption={sharedMode ? undefined : applyDecisionOption}
+            onApproveDecision={sharedMode ? undefined : approveDecisionBlock}
+            approvedBlockIds={workspaceState.approvedBlockIds ?? []}
+            reviewRequiredBlockIds={publicationReadiness.requiredBlockIds}
           />
         )}
       </>
@@ -865,7 +923,7 @@ export default function App() {
   };
 
   return (
-    <div className="flex h-dvh w-full min-w-0 flex-col bg-white md:flex-row">
+    <div className="workspace-surface flex h-dvh w-full min-w-0 flex-col text-slate-950 md:flex-row">
       <Sidebar
         activeView={effectiveActiveView}
         activeWorkspaceId={activeWorkspaceId}
@@ -877,24 +935,23 @@ export default function App() {
         onSwitchWorkspace={switchWorkspace}
         onViewChange={changeView}
       />
-      <div className="flex-1 min-w-0 flex flex-col">
+      <div className="min-w-0 flex flex-1 flex-col">
         <Toolbar
           activeView={effectiveActiveView}
-          approvalStatus={approvalStatus}
           analysisStatus={analysisStatus}
           draftCount={workspaceState.drafts.length}
           hasMergeResult={Boolean(workspaceState.analysisResult)}
           normalizedIdeaCount={displayedIdeaCount}
-          onApprove={approveDecision}
           onExportMarkdown={exportMarkdown}
           onExportWorkspace={exportWorkspace}
           onImportWorkspace={importWorkspace}
+          onPrimaryAction={handlePublicationPrimaryAction}
           onReanalyze={reanalyze}
           onRevokeSharedWorkspace={revokeCurrentSharedWorkspace}
           onShareWorkspace={shareWorkspace}
           onViewChange={changeView}
           projectTitle={workspaceState.project.title}
-          qualityLevel={qualityLevel}
+          publicationReadiness={publicationReadiness}
           canRevokeSharedWorkspace={Boolean(ownedShareAccess?.manageToken)}
           sharedMode={sharedMode}
         />
@@ -906,12 +963,7 @@ export default function App() {
           onChange={importWorkspaceFile}
         />
         {displayedNotice && (
-          <div
-            data-testid="app-notice"
-            className="border-b border-emerald-100 bg-emerald-50 px-8 py-2 text-sm text-emerald-800"
-          >
-            {displayedNotice}
-          </div>
+          <NoticeBanner tone="success" message={displayedNotice} />
         )}
         {sharedWorkspaceLink && (
           <ShareWorkspaceBanner
@@ -921,16 +973,18 @@ export default function App() {
           />
         )}
         {sharedWorkspaceId && (
-          <div className="border-b border-blue-100 bg-blue-50 px-8 py-2 text-sm text-blue-800">
-            공유된 워크스페이스를 보고 있습니다. 투표·의견·초안 제출만 반영됩니다.
-          </div>
+          <NoticeBanner
+            tone="info"
+            message="공유된 워크스페이스를 보고 있습니다. 문서는 읽기 전용이며, 투표와 의견 제출만 반영됩니다."
+          />
         )}
         {effectiveActiveView === 'merge' && workspaceState.analysisResult?.source === 'local_harness' && !sampleWorkspace && (
-          <div className="border-b border-amber-100 bg-amber-50 px-8 py-2 text-sm text-amber-800">
-            로컬 하네스 결과입니다. 실제 모델 호출 전 구조 검증과 화면 연결 확인에 사용합니다.
-          </div>
+          <NoticeBanner
+            tone="warning"
+            message="로컬 하네스 결과입니다. 실제 모델 호출 전 구조 검증과 화면 연결 확인에 사용하세요."
+          />
         )}
-        <div className="flex flex-1 min-h-0 flex-col overflow-y-auto xl:flex-row xl:overflow-hidden">
+        <div ref={contentViewportRef} className="flex min-h-0 flex-1 flex-col overflow-y-auto xl:flex-row xl:overflow-hidden">
           {renderContent()}
         </div>
       </div>
@@ -952,52 +1006,61 @@ function MergePreparationView({
   const hasDrafts = draftCount > 0;
 
   return (
-    <main className="flex min-h-0 flex-1 items-center justify-center bg-white px-4 py-10">
-      <div className="w-full max-w-2xl rounded-md border border-gray-200 bg-white p-6 shadow-sm sm:p-8">
-        <div className="text-xs text-gray-500">Merge Result</div>
-        <h2 className="mt-2 text-2xl text-gray-900">아직 병합 결과가 없습니다.</h2>
-        <p className="mt-3 text-sm leading-relaxed text-gray-600">
+    <main className="flex min-h-0 flex-1 items-center justify-center px-4 py-10">
+      <div className="motion-panel w-full max-w-3xl overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[0_24px_80px_rgba(15,23,42,0.08)]">
+        <div className="border-b border-slate-100 bg-slate-950 p-6 text-white sm:p-7">
+          <div className="inline-flex items-center gap-2 rounded-md border border-white/14 bg-white/8 px-3 py-1 text-xs font-medium text-slate-200">
+            <GitMerge className="h-3.5 w-3.5 text-emerald-300" />
+            병합 준비
+          </div>
+          <h2 className="mt-4 text-2xl font-semibold">아직 병합 결과가 없습니다.</h2>
+          <p className="mt-2 max-w-2xl text-sm leading-7 text-slate-300">
           {readOnly
             ? '이 공유 워크스페이스에는 표시할 병합 결과가 없습니다.'
-            : '프로젝트 기준을 저장하고 AI 초안을 붙여넣은 뒤 분석을 실행하면, 최종 기획서와 섹션별 선택 근거가 생성됩니다.'}
-        </p>
+            : '프로젝트 기준과 AI 초안을 준비하면, 최종 문서와 섹션별 선택 근거를 함께 생성합니다.'}
+          </p>
+        </div>
 
         {!readOnly && (
-          <>
-            <div className="mt-6 grid gap-3 sm:grid-cols-3">
-              <div className="rounded-md border border-gray-200 p-4">
-                <div className="text-sm text-gray-900">1. 프로젝트 설정</div>
-                <p className="mt-2 text-xs leading-relaxed text-gray-500">목표, 공통 기준, 제외 범위를 먼저 고정합니다.</p>
-              </div>
-              <div className="rounded-md border border-gray-200 p-4">
-                <div className="text-sm text-gray-900">2. 초안 입력</div>
-                <p className="mt-2 text-xs leading-relaxed text-gray-500">팀원이 AI로 만든 초안을 여러 개 붙여넣습니다.</p>
-              </div>
-              <div className="rounded-md border border-gray-200 p-4">
-                <div className="text-sm text-gray-900">3. 병합 분석</div>
-                <p className="mt-2 text-xs leading-relaxed text-gray-500">선택안, 대안, 충돌 의견을 Decision Block으로 정리합니다.</p>
-              </div>
+          <div className="p-5 sm:p-6">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <PreparationStep
+                icon={<FileText className="h-4 w-4" />}
+                title="기준 정리"
+                description="목표, 배경, 제외 범위를 분석 기준으로 저장합니다."
+              />
+              <PreparationStep
+                icon={<UploadCloud className="h-4 w-4" />}
+                title="초안 수집"
+                description="팀원이 만든 AI 초안과 PDF 자료를 한곳에 모읍니다."
+              />
+              <PreparationStep
+                icon={<ShieldCheck className="h-4 w-4" />}
+                title="근거 검토"
+                description="선택안, 대안, 충돌 의견을 품질 게이트로 확인합니다."
+              />
             </div>
 
             <div className="mt-6 flex flex-col gap-2 sm:flex-row">
               <button
                 type="button"
-                className="rounded-md bg-blue-600 px-4 py-2 text-sm text-white transition-colors hover:bg-blue-700"
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
                 onClick={hasDrafts ? onRunAnalysis : onAddDraft}
               >
                 {hasDrafts ? `${draftCount}개 초안으로 분석 실행` : '초안 입력하기'}
+                <ArrowRight className="h-4 w-4" />
               </button>
               {hasDrafts && (
                 <button
                   type="button"
-                  className="rounded-md border border-gray-200 px-4 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50"
+                  className="inline-flex min-h-11 items-center justify-center rounded-lg border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
                   onClick={onAddDraft}
                 >
                   초안 더 추가
                 </button>
               )}
             </div>
-          </>
+          </div>
         )}
       </div>
     </main>
@@ -1014,13 +1077,18 @@ function ShareWorkspaceBanner({
   onDismiss: () => void;
 }) {
   return (
-    <div className="border-b border-blue-100 bg-blue-50 px-4 py-3 sm:px-8">
+    <div className="border-b border-blue-100 bg-blue-50/92 px-4 py-3 sm:px-8">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="min-w-0">
-          <div className="text-sm text-blue-950">팀 공유 링크가 생성되었습니다.</div>
-          <p className="mt-1 text-xs leading-relaxed text-blue-700">
-            현재 워크스페이스의 스냅샷 링크입니다. 이후 수정한 내용까지 공유하려면 공유를 다시 갱신하세요.
-          </p>
+        <div className="flex min-w-0 items-start gap-3">
+          <span className="grid h-9 w-9 flex-shrink-0 place-items-center rounded-lg bg-blue-600 text-white shadow-lg shadow-blue-600/16">
+            <Share2 className="h-4 w-4" />
+          </span>
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-blue-950">공유 링크가 준비됐습니다.</div>
+            <p className="mt-1 text-xs leading-6 text-blue-700">
+              이 링크는 현재 분석 결과의 스냅샷입니다. 초안을 수정하거나 다시 분석했다면 공유 링크를 갱신해 주세요.
+            </p>
+          </div>
         </div>
         <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
           <input
@@ -1028,22 +1096,24 @@ function ShareWorkspaceBanner({
             readOnly
             value={shareUrl}
             aria-label="팀 공유 링크"
-            className="h-9 min-w-0 rounded-md border border-blue-200 bg-white px-3 text-xs text-blue-950 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 sm:w-96"
+            className="focus-ring h-9 min-w-0 rounded-md border border-blue-200 bg-white px-3 text-xs text-blue-950 sm:w-96"
             onFocus={(event) => event.currentTarget.select()}
           />
           <button
             type="button"
-            className="h-9 rounded-md bg-blue-600 px-3 text-sm text-white transition-colors hover:bg-blue-700"
+            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-blue-600 px-3 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
             onClick={onCopy}
           >
+            <Clipboard className="h-3.5 w-3.5" />
             복사
           </button>
           <button
             type="button"
-            className="h-9 rounded-md px-3 text-sm text-blue-700 transition-colors hover:bg-blue-100"
+            className="grid h-9 w-9 place-items-center rounded-md text-blue-700 transition-colors hover:bg-blue-100"
+            aria-label="공유 링크 알림 닫기"
             onClick={onDismiss}
           >
-            닫기
+            <X className="h-4 w-4" />
           </button>
         </div>
       </div>
@@ -1055,6 +1125,19 @@ function waitForLoadingTime(milliseconds: number) {
   return new Promise((resolve) => {
     window.setTimeout(resolve, milliseconds);
   });
+}
+
+function clearStaleAnalysis(state: LocalWorkspaceState): LocalWorkspaceState {
+  if (!state.analysisResult && !state.approvedBlockIds?.length && state.decisionLogs.length === 0) {
+    return state;
+  }
+
+  return {
+    ...state,
+    analysisResult: undefined,
+    approvedBlockIds: [],
+    decisionLogs: [],
+  };
 }
 
 function getShareUrlWorkspaceId(url: string) {
@@ -1122,48 +1205,96 @@ function createProjectSettingsKey(project: ProjectSettings) {
   ].join('|');
 }
 
-function getSectionDecisionBlockIds(section: DocumentSectionData | undefined) {
-  if (!section) {
-    return [];
-  }
-
-  const traces = section.decisionTraces?.length
-    ? section.decisionTraces
-    : section.decisionTrace
-      ? [section.decisionTrace]
-      : [];
-
-  return traces.map((trace) => trace.decisionBlockId);
-}
-
 function mergeApprovedBlockIds(currentBlockIds: string[] | undefined, nextBlockIds: string[]) {
   return [...new Set([...(currentBlockIds ?? []), ...nextBlockIds])];
 }
 
 function AnalysisLoadingView({ draftCount }: { draftCount: number }) {
   return (
-    <main className="flex min-h-0 flex-1 items-center justify-center bg-white px-6 py-10">
-      <div className="w-full max-w-xl rounded-md border border-blue-100 bg-blue-50/40 p-6">
-        <div className="mb-4 flex items-center gap-3">
-          <div className="h-4 w-4 animate-spin rounded-full border-2 border-blue-200 border-t-blue-600" />
-          <div>
-            <h2 className="text-base text-gray-900">병합 분석 중</h2>
-            <p className="mt-1 text-sm text-gray-600">
-              {draftCount}개 초안을 기준으로 섹션, 선택안, 대안, 충돌 의견을 정리합니다.
-            </p>
+    <main className="flex min-h-0 flex-1 items-center justify-center px-6 py-10">
+      <div className="motion-panel w-full max-w-2xl overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[0_24px_80px_rgba(15,23,42,0.08)]">
+        <div className="border-b border-slate-100 bg-slate-950 p-6 text-white">
+          <div className="mb-4 flex items-center gap-3">
+            <span className="grid h-10 w-10 place-items-center rounded-lg bg-white/10 text-emerald-300">
+              <Loader2 className="h-5 w-5 animate-spin" />
+            </span>
+            <div>
+              <h2 className="text-lg font-semibold">병합 분석을 실행하고 있습니다.</h2>
+              <p className="mt-1 text-sm leading-6 text-slate-300">
+                {draftCount}개 초안을 기준으로 문서 섹션, 선택안, 대안, 충돌 의견을 정리합니다.
+              </p>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <div className="flow-line h-2 w-full rounded-full bg-gradient-to-r from-blue-300 via-emerald-300 to-amber-200" />
+            <div className="flow-line h-2 w-5/6 rounded-full bg-gradient-to-r from-emerald-300 via-blue-300 to-violet-200" />
+            <div className="flow-line h-2 w-2/3 rounded-full bg-gradient-to-r from-amber-200 via-rose-200 to-blue-200" />
           </div>
         </div>
-        <div className="space-y-2">
-          <div className="h-2 w-full animate-pulse rounded-full bg-blue-100" />
-          <div className="h-2 w-5/6 animate-pulse rounded-full bg-blue-100" />
-          <div className="h-2 w-2/3 animate-pulse rounded-full bg-blue-100" />
-        </div>
-        <div className="mt-4 space-y-1 text-xs leading-relaxed text-gray-500">
-          <div>1. 초안을 섹션별 아이디어 후보로 나눕니다.</div>
-          <div>2. 유사 의견과 충돌 의견을 묶습니다.</div>
-          <div>3. Decision Block 기준으로 결과 화면을 갱신합니다.</div>
+        <div className="grid gap-3 p-5 sm:grid-cols-3">
+          <PreparationStep
+            icon={<FileText className="h-4 w-4" />}
+            title="아이디어 정규화"
+            description="각 초안을 섹션별 아이디어 후보로 나눕니다."
+          />
+          <PreparationStep
+            icon={<GitMerge className="h-4 w-4" />}
+            title="결정 블록 생성"
+            description="유사 의견과 충돌 의견을 같은 주제로 묶습니다."
+          />
+          <PreparationStep
+            icon={<ShieldCheck className="h-4 w-4" />}
+            title="품질 게이트 확인"
+            description="출처, 누락 섹션, 검토 필요 항목을 계산합니다."
+          />
         </div>
       </div>
     </main>
+  );
+}
+
+function NoticeBanner({
+  message,
+  tone,
+}: {
+  message: string;
+  tone: 'info' | 'success' | 'warning';
+}) {
+  const toneClass = {
+    info: 'border-blue-100 bg-blue-50 text-blue-800',
+    success: 'border-emerald-100 bg-emerald-50 text-emerald-800',
+    warning: 'border-amber-100 bg-amber-50 text-amber-800',
+  }[tone];
+  const Icon = tone === 'warning' ? RefreshCw : CheckCircle2;
+
+  return (
+    <div data-testid="app-notice" className={`border-b px-4 py-2.5 text-sm sm:px-8 ${toneClass}`}>
+      <div className="flex items-center gap-2">
+        <Icon className="h-4 w-4 flex-shrink-0" />
+        <span className="leading-6">{message}</span>
+      </div>
+    </div>
+  );
+}
+
+function PreparationStep({
+  description,
+  icon,
+  title,
+}: {
+  description: string;
+  icon: ReactNode;
+  title: string;
+}) {
+  return (
+    <div className="lift-card rounded-lg border border-slate-200 bg-slate-50/70 p-4">
+      <div className="mb-3 flex items-center gap-2">
+        <span className="grid h-8 w-8 place-items-center rounded-md bg-white text-slate-500 shadow-sm">
+          {icon}
+        </span>
+        <div className="text-sm font-semibold text-slate-950">{title}</div>
+      </div>
+      <p className="text-xs leading-6 text-slate-500">{description}</p>
+    </div>
   );
 }

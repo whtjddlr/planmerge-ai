@@ -1,92 +1,101 @@
-import { useEffect, useRef, useState } from 'react';
+import {
+  ClipboardList,
+  Download,
+  FileDown,
+  FilePlus2,
+  FolderOpen,
+  MoreHorizontal,
+  RefreshCw,
+  Share2,
+  ShieldAlert,
+  ShieldCheck,
+  Undo2,
+} from 'lucide-react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { AuthControl } from './AuthControl';
 import type { AppView } from '../types/navigation';
-import type { QualityLevel } from '../lib/analysisQuality';
+import type { PublicationReadiness, PublicationReadinessLevel } from '../lib/publicationReadiness';
 
 type ToolbarProps = {
   activeView: AppView;
-  approvalStatus: 'pending' | 'approved';
   analysisStatus: 'idle' | 'analyzing' | 'completed';
   canRevokeSharedWorkspace: boolean;
   draftCount: number;
   hasMergeResult: boolean;
   normalizedIdeaCount: number;
-  onApprove: () => void;
   onExportMarkdown: () => void;
   onExportWorkspace: () => void;
   onImportWorkspace: () => void;
+  onPrimaryAction: () => void;
   onReanalyze: () => void;
   onRevokeSharedWorkspace: () => void;
   onShareWorkspace: () => void;
   onViewChange: (view: AppView) => void;
   projectTitle: string;
-  qualityLevel: QualityLevel | null;
+  publicationReadiness: PublicationReadiness;
   sharedMode: boolean;
 };
 
 const viewCopy: Record<AppView, { title: string; subtitle: string; breadcrumb: string }> = {
   setup: {
     title: '프로젝트 설정',
-    subtitle: '기획서 목표와 공통 기준을 정리합니다',
+    subtitle: 'AI 초안을 병합하기 전에 목표, 배경, 제외 범위를 정리합니다.',
     breadcrumb: '프로젝트 / 설정',
   },
   drafts: {
     title: '초안 입력',
-    subtitle: '팀원이 만든 AI 초안을 붙여넣고 제출 정보를 관리합니다',
+    subtitle: '사람마다 다른 AI 초안과 PDF 자료를 같은 기준으로 모읍니다.',
     breadcrumb: '프로젝트 / 초안 입력',
   },
   merge: {
     title: '병합 결과',
-    subtitle: '3개의 AI 초안에서 42개의 아이디어를 추출했습니다',
-    breadcrumb: '프로젝트 / AI 공동 기획서 병합 도구',
+    subtitle: '선택안, 대안, 충돌 의견을 근거와 함께 검토합니다.',
+    breadcrumb: '프로젝트 / 병합 결과',
   },
   inspector: {
-    title: 'Analysis Inspector',
-    subtitle: '정규화 아이디어, 출처, Decision Block, 검증 상태를 확인합니다',
-    breadcrumb: '프로젝트 / 분석 Inspector',
+    title: '분석 검토',
+    subtitle: '정규화된 아이디어, 출처, 결정 블록, 검증 상태를 확인합니다.',
+    breadcrumb: '프로젝트 / 분석 검토',
   },
   openQuestions: {
-    title: 'Review Queue',
-    subtitle: '내보내기 전에 처리할 충돌, 검토, 입력 부족 섹션을 정리합니다',
-    breadcrumb: '프로젝트 / Review Queue',
+    title: '검토 큐',
+    subtitle: '공유 전에 보완해야 할 충돌, 검토, 입력 부족 섹션을 정리합니다.',
+    breadcrumb: '프로젝트 / 검토 큐',
   },
   myShares: {
     title: '내 공유 링크',
-    subtitle: '로그인한 계정으로 만든 공유 링크를 관리합니다',
+    subtitle: '로그인한 계정으로 만든 공유 링크를 관리합니다.',
     breadcrumb: '계정 / 내 공유 링크',
   },
 };
 
 export function Toolbar({
   activeView,
-  approvalStatus,
   analysisStatus,
   canRevokeSharedWorkspace,
   draftCount,
   hasMergeResult,
   normalizedIdeaCount,
-  onApprove,
   onExportMarkdown,
   onExportWorkspace,
   onImportWorkspace,
+  onPrimaryAction,
   onReanalyze,
   onRevokeSharedWorkspace,
   onShareWorkspace,
   onViewChange,
   projectTitle,
-  qualityLevel,
+  publicationReadiness,
   sharedMode,
 }: ToolbarProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuContainerRef = useRef<HTMLDivElement | null>(null);
-  const qualityGateBlocked = qualityLevel === 'blocked';
-  const qualityGateBlockedTitle = '품질 게이트 차단: 구조 오류 또는 근거 부족을 먼저 해결해야 합니다.';
-  const shareDisabled = !hasMergeResult || qualityGateBlocked;
+  const shareDisabled = !hasMergeResult || !publicationReadiness.canShare;
   const shareDisabledTitle = !hasMergeResult
     ? '분석 결과가 있어야 공유할 수 있습니다.'
-    : qualityGateBlocked
-      ? qualityGateBlockedTitle
-      : undefined;
+    : publicationReadiness.canShare
+      ? undefined
+      : publicationReadiness.detail;
 
   useEffect(() => {
     if (!menuOpen) {
@@ -115,16 +124,18 @@ export function Toolbar({
 
   const copy = {
     ...viewCopy[activeView],
-    breadcrumb: activeView === 'merge'
-      ? `프로젝트 / ${projectTitle.trim() || '새 프로젝트'}`
-      : viewCopy[activeView].breadcrumb,
-    subtitle: activeView === 'merge'
-      ? getMergeSubtitle(draftCount, normalizedIdeaCount, hasMergeResult)
-      : activeView === 'inspector'
-        ? `${draftCount}개의 초안을 기준으로 분석 구조를 검사합니다`
-        : activeView === 'drafts' && sharedMode
-          ? '공유 워크스페이스에 AI 초안을 제출합니다'
-          : viewCopy[activeView].subtitle,
+    breadcrumb:
+      activeView === 'merge'
+        ? `프로젝트 / ${projectTitle.trim() || '새 프로젝트'}`
+        : viewCopy[activeView].breadcrumb,
+    subtitle:
+      activeView === 'merge'
+        ? getMergeSubtitle(draftCount, normalizedIdeaCount, hasMergeResult)
+        : activeView === 'inspector'
+          ? `${draftCount}개 초안을 기준으로 분석 구조를 검토합니다.`
+          : activeView === 'drafts' && sharedMode
+            ? '공유 워크스페이스에 AI 초안을 제출합니다.'
+            : viewCopy[activeView].subtitle,
   };
 
   const runMenuAction = (action: () => void) => {
@@ -133,102 +144,118 @@ export function Toolbar({
   };
 
   return (
-    <div className="border-b border-gray-200 bg-white flex-shrink-0">
-      <div className="flex flex-col gap-3 px-4 py-3 sm:px-8 md:flex-row md:items-center md:justify-between">
+    <header className="relative z-40 flex-shrink-0 border-b border-slate-200/70 bg-white/82 backdrop-blur-xl">
+      <div className="flex flex-col gap-4 px-4 py-4 sm:px-8 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0">
-          <div className="text-xs text-gray-500 mb-1">{copy.breadcrumb}</div>
-          <h1 className="text-lg text-gray-900 mb-1">{copy.title}</h1>
-          <div className="text-sm text-gray-600">{copy.subtitle}</div>
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-500">
+              {copy.breadcrumb}
+            </span>
+            <ReadinessBadge level={publicationReadiness.level} />
+          </div>
+          <h1 className="text-xl font-semibold text-slate-950">{copy.title}</h1>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">{copy.subtitle}</p>
         </div>
-        <div className="flex flex-shrink-0 flex-wrap items-center justify-end gap-2">
+
+        <div className="flex flex-shrink-0 flex-wrap items-center justify-start gap-2 lg:justify-end">
+          <ToolbarMetric label="초안" value={draftCount.toString()} />
+          <ToolbarMetric label="아이디어" value={hasMergeResult ? normalizedIdeaCount.toString() : '-'} />
+
           <div ref={menuContainerRef} className="relative flex flex-shrink-0 items-center gap-2">
+            {activeView === 'merge' && hasMergeResult && !sharedMode && (
+              <button
+                type="button"
+                data-testid="publication-primary-action"
+                className={`focus-ring inline-flex min-h-10 items-center gap-2 rounded-lg px-4 text-sm font-semibold text-white transition-colors ${
+                  publicationReadiness.level === 'ready'
+                    ? 'bg-emerald-600 hover:bg-emerald-700'
+                    : 'bg-slate-950 hover:bg-slate-800'
+                } disabled:cursor-not-allowed disabled:bg-slate-300`}
+                disabled={analysisStatus === 'analyzing'}
+                title={publicationReadiness.detail}
+                onClick={onPrimaryAction}
+              >
+                {publicationReadiness.level === 'ready'
+                  ? <FileDown className="h-4 w-4" />
+                  : <ClipboardList className="h-4 w-4" />}
+                {publicationPrimaryActionLabel(publicationReadiness)}
+              </button>
+            )}
+
             <button
               type="button"
-              className="px-3 py-1.5 rounded-md text-sm text-gray-600 hover:bg-gray-100 transition-colors"
+              data-testid="toolbar-menu-button"
+              className="focus-ring grid h-10 w-10 place-items-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm transition-colors hover:border-slate-300 hover:bg-slate-50"
               aria-label="추가 작업"
               aria-expanded={menuOpen}
               onClick={() => setMenuOpen((open) => !open)}
             >
-              •••
+              <MoreHorizontal className="h-5 w-5" />
             </button>
-            {activeView === 'merge' && hasMergeResult && !sharedMode && (
-              <button
-                type="button"
-                className={`px-4 py-1.5 rounded-md text-sm text-white transition-colors ${
-                  approvalStatus === 'approved'
-                    ? 'bg-emerald-600 hover:bg-emerald-700'
-                    : 'bg-blue-600 hover:bg-blue-700'
-                } disabled:cursor-not-allowed disabled:bg-gray-300`}
-                disabled={analysisStatus === 'analyzing' || qualityGateBlocked}
-                title={qualityGateBlocked ? qualityGateBlockedTitle : undefined}
-                onClick={onApprove}
-              >
-                {approvalStatus === 'approved' ? '승인 완료' : '선택안 승인'}
-              </button>
-            )}
+
             {menuOpen && (
-              <div className="absolute right-0 top-10 z-10 w-56 rounded-md border border-gray-200 bg-white p-1 shadow-lg">
+              <div className="motion-panel absolute right-0 top-12 z-50 w-64 rounded-lg border border-slate-200 bg-white p-1.5 shadow-2xl shadow-slate-900/12">
                 {!sharedMode && (
                   <>
-                    <button
-                      type="button"
-                      className="w-full whitespace-nowrap rounded px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                    <MenuButton
+                      testId="toolbar-add-draft-button"
+                      icon={<FilePlus2 className="h-4 w-4" />}
                       onClick={() => runMenuAction(() => onViewChange('drafts'))}
                     >
                       초안 추가
-                    </button>
-                    <button
-                      type="button"
-                      className="w-full whitespace-nowrap rounded px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-wait disabled:text-gray-400"
+                    </MenuButton>
+                    <MenuButton
+                      testId="toolbar-rerun-analysis-button"
+                      icon={<RefreshCw className={`h-4 w-4 ${analysisStatus === 'analyzing' ? 'animate-spin' : ''}`} />}
                       disabled={analysisStatus === 'analyzing'}
                       onClick={() => runMenuAction(onReanalyze)}
                     >
                       {analysisStatus === 'analyzing' ? '분석 중' : '다시 분석'}
-                    </button>
+                    </MenuButton>
                   </>
                 )}
                 {!sharedMode && (
-                  <button
-                    type="button"
-                    className="w-full whitespace-nowrap rounded px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400"
+                  <MenuButton
+                    testId="share-workspace-button"
+                    icon={<Share2 className="h-4 w-4" />}
                     disabled={shareDisabled}
                     title={shareDisabledTitle}
                     onClick={() => runMenuAction(onShareWorkspace)}
                   >
-                    팀 공유 링크 만들기
-                  </button>
+                    공유 링크 만들기
+                  </MenuButton>
                 )}
                 {canRevokeSharedWorkspace && (
-                  <button
-                    type="button"
-                    className="w-full whitespace-nowrap rounded px-3 py-2 text-left text-sm text-red-700 hover:bg-red-50"
+                  <MenuButton
+                    tone="danger"
+                    icon={<Undo2 className="h-4 w-4" />}
                     onClick={() => runMenuAction(onRevokeSharedWorkspace)}
                   >
                     공유 링크 회수
-                  </button>
+                  </MenuButton>
                 )}
-                <button
-                  type="button"
-                  className="w-full whitespace-nowrap rounded px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                <div className="my-1 border-t border-slate-100" />
+                <MenuButton
+                  testId="export-markdown-button"
+                  icon={<FileDown className="h-4 w-4" />}
                   onClick={() => runMenuAction(onExportMarkdown)}
                 >
-                  Markdown 내보내기
-                </button>
-                <button
-                  type="button"
-                  className="w-full whitespace-nowrap rounded px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                  {publicationReadiness.canShare ? 'Markdown 내보내기' : '검토본 Markdown 내보내기'}
+                </MenuButton>
+                <MenuButton
+                  testId="export-workspace-button"
+                  icon={<Download className="h-4 w-4" />}
                   onClick={() => runMenuAction(onExportWorkspace)}
                 >
                   워크스페이스 내보내기
-                </button>
+                </MenuButton>
                 {!sharedMode && (
-                  <button
-                    type="button"
-                    className="w-full whitespace-nowrap rounded px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                  <MenuButton
+                    icon={<FolderOpen className="h-4 w-4" />}
                     onClick={() => runMenuAction(onImportWorkspace)}
                   >
                     워크스페이스 가져오기
-                  </button>
+                  </MenuButton>
                 )}
               </div>
             )}
@@ -236,18 +263,113 @@ export function Toolbar({
           <AuthControl onOpenMyShares={() => onViewChange('myShares')} />
         </div>
       </div>
+    </header>
+  );
+}
+
+function ToolbarMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="hidden min-h-10 rounded-lg border border-slate-200 bg-white px-3 py-2 shadow-sm sm:block">
+      <div className="text-[11px] font-medium text-slate-500">{label}</div>
+      <div className="text-sm font-semibold text-slate-950">{value}</div>
     </div>
+  );
+}
+
+function ReadinessBadge({ level }: { level: PublicationReadinessLevel }) {
+  if (level === 'blocked') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-md border border-red-100 bg-red-50 px-2 py-1 text-xs font-medium text-red-700">
+        <ShieldAlert className="h-3.5 w-3.5" />
+        사용 보류
+      </span>
+    );
+  }
+
+  if (level === 'ready') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-md border border-emerald-100 bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700">
+        <ShieldCheck className="h-3.5 w-3.5" />
+        공유 가능
+      </span>
+    );
+  }
+
+  if (level === 'review') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-md border border-amber-100 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700">
+        <ShieldAlert className="h-3.5 w-3.5" />
+        공유 보류
+      </span>
+    );
+  }
+
+  return (
+      <span className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-500">
+        <ShieldCheck className="h-3.5 w-3.5" />
+      검증 대기
+      </span>
+  );
+}
+
+function publicationPrimaryActionLabel(readiness: PublicationReadiness) {
+  if (readiness.level === 'ready') {
+    return '최종본 내보내기';
+  }
+
+  if (readiness.level === 'blocked') {
+    return '품질 문제 확인';
+  }
+
+  return readiness.unresolvedCount > 0
+    ? `남은 검토 ${readiness.unresolvedCount}건`
+    : '보완 항목 확인';
+}
+
+function MenuButton({
+  children,
+  disabled,
+  icon,
+  onClick,
+  testId,
+  title,
+  tone = 'default',
+}: {
+  children: ReactNode;
+  disabled?: boolean;
+  icon: ReactNode;
+  onClick: () => void;
+  testId?: string;
+  title?: string;
+  tone?: 'default' | 'danger';
+}) {
+  return (
+    <button
+      data-testid={testId}
+      type="button"
+      className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:text-slate-400 ${
+        tone === 'danger'
+          ? 'text-red-700 hover:bg-red-50'
+          : 'text-slate-700 hover:bg-slate-50 hover:text-slate-950'
+      }`}
+      disabled={disabled}
+      title={title}
+      onClick={onClick}
+    >
+      <span className="text-current">{icon}</span>
+      <span className="min-w-0 truncate">{children}</span>
+    </button>
   );
 }
 
 function getMergeSubtitle(draftCount: number, normalizedIdeaCount: number, hasMergeResult: boolean) {
   if (!draftCount) {
-    return '프로젝트 설정 후 AI 초안을 입력하면 병합 결과가 생성됩니다';
+    return '프로젝트 설정 뒤 AI 초안을 입력하면 병합 결과가 생성됩니다.';
   }
 
   if (!hasMergeResult) {
-    return `${draftCount}개 초안이 준비되었습니다. 병합 분석을 실행해 주세요`;
+    return `${draftCount}개 초안이 준비됐습니다. 병합 분석을 실행해 주세요.`;
   }
 
-  return `${draftCount}개 초안에서 ${normalizedIdeaCount}개 아이디어를 추출했습니다`;
+  return `${draftCount}개 초안에서 ${normalizedIdeaCount}개 아이디어를 추출했습니다.`;
 }

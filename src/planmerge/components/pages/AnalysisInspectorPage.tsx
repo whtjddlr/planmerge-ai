@@ -1,3 +1,15 @@
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ClipboardList,
+  Database,
+  FileSearch,
+  GitMerge,
+  History,
+  RefreshCw,
+  ShieldCheck,
+  Sparkles,
+} from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { StatusBadge } from '../StatusBadge';
 import type { LocalDecisionLog, LocalDraftSubmission, ProjectSettings } from '../../lib/localWorkspace';
@@ -21,34 +33,39 @@ import type {
   ProtocolDecisionBlock,
   ProtocolDecisionOption,
 } from '../../lib/ai/planmergeProtocol';
+import type { PublicationReadiness } from '../../lib/publicationReadiness';
 
 type AnalysisInspectorPageProps = {
   project: ProjectSettings;
+  approvedBlockIds: string[];
   drafts: LocalDraftSubmission[];
   analysisResult?: PlanMergeAnalysisResult;
   analysisStatus: 'idle' | 'analyzing' | 'completed';
   decisionLogs: LocalDecisionLog[];
   onRunAnalysis: () => void;
+  publicationReadiness: PublicationReadiness;
   readOnly: boolean;
 };
 
 type InspectorTab = 'quality' | 'ideas' | 'decisions' | 'logs' | 'validation';
 
 const tabLabels: Record<InspectorTab, string> = {
-  quality: 'Quality Gate',
-  ideas: 'Ideas',
-  decisions: 'Decision Blocks',
-  logs: 'Decision Logs',
-  validation: 'Validation',
+  quality: '품질 게이트',
+  ideas: '정규화 아이디어',
+  decisions: '결정 블록',
+  logs: '변경 기록',
+  validation: '검증 결과',
 };
 
 export function AnalysisInspectorPage({
   project,
+  approvedBlockIds,
   drafts,
   analysisResult,
   analysisStatus,
   decisionLogs,
   onRunAnalysis,
+  publicationReadiness,
   readOnly,
 }: AnalysisInspectorPageProps) {
   const [activeTab, setActiveTab] = useState<InspectorTab>('quality');
@@ -67,8 +84,8 @@ export function AnalysisInspectorPage({
       return undefined;
     }
 
-    return evaluateAnalysisQuality({ project, drafts }, analysisResult);
-  }, [analysisResult, drafts, project]);
+    return evaluateAnalysisQuality({ project, drafts }, analysisResult, approvedBlockIds);
+  }, [analysisResult, approvedBlockIds, drafts, project]);
   const openQualityAction = (action: QualityAction) => {
     if (!action.destination) {
       return;
@@ -92,20 +109,24 @@ export function AnalysisInspectorPage({
 
   if (!analysisResult) {
     return (
-      <main className="flex min-h-0 flex-1 items-center justify-center bg-white px-6 py-10">
-        <div className="w-full max-w-xl rounded-md border border-gray-200 p-6">
-          <h2 className="text-base text-gray-900">분석 결과 없음</h2>
-          <div className="mt-2 text-sm leading-relaxed text-gray-600">
-            현재 워크스페이스에는 검사할 분석 결과가 없습니다.
+      <main className="flex min-h-0 flex-1 items-center justify-center px-6 py-10">
+        <div className="motion-panel w-full max-w-xl rounded-lg border border-slate-200 bg-white p-6 shadow-[0_18px_55px_rgba(15,23,42,0.07)]">
+          <div className="mb-4 grid h-11 w-11 place-items-center rounded-lg bg-slate-950 text-white">
+            <FileSearch className="h-5 w-5" />
+          </div>
+          <h2 className="text-lg font-semibold text-slate-950">검토할 분석 결과가 없습니다.</h2>
+          <div className="mt-2 text-sm leading-7 text-slate-600">
+            초안을 추가한 뒤 병합 분석을 실행하면 아이디어, 결정 블록, 품질 게이트를 여기에서 점검할 수 있습니다.
           </div>
           {!readOnly && (
             <button
               type="button"
-              className="mt-5 rounded-md bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700 disabled:cursor-wait disabled:bg-gray-300"
+              className="mt-5 inline-flex min-h-11 items-center gap-2 rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-wait disabled:bg-slate-300"
               disabled={analysisStatus === 'analyzing'}
               onClick={onRunAnalysis}
             >
-              {analysisStatus === 'analyzing' ? '분석 중' : '분석 실행'}
+              <RefreshCw className={`h-4 w-4 ${analysisStatus === 'analyzing' ? 'animate-spin' : ''}`} />
+              {analysisStatus === 'analyzing' ? '분석 중' : '병합 분석 실행'}
             </button>
           )}
         </div>
@@ -114,12 +135,19 @@ export function AnalysisInspectorPage({
   }
 
   return (
-    <main className="min-h-0 flex-1 overflow-y-auto bg-white">
+    <main className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto max-w-6xl px-4 py-8 sm:px-8">
         <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
-            <h2 className="text-2xl text-gray-900">Analysis Inspector</h2>
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-500">
+            <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-blue-700">
+              <ShieldCheck className="h-4 w-4" />
+              분석 검토
+            </div>
+            <h2 className="text-2xl font-semibold text-slate-950">근거와 품질 상태를 점검합니다.</h2>
+            <p className="mt-2 max-w-3xl text-sm leading-7 text-slate-600">
+              병합 결과가 어떤 초안에서 왔는지, 어떤 결정이 자동 선택됐는지, 공유 전에 어떤 보완이 필요한지 확인합니다.
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
               <StatusBadge variant={analysisResult.source === 'local_harness' ? 'warning' : 'success'}>
                 {analysisResult.source === 'gms'
                   ? 'GMS'
@@ -127,10 +155,10 @@ export function AnalysisInspectorPage({
                     ? 'Gemini'
                   : analysisResult.source === 'solar'
                     ? 'Solar'
-                    : 'Local Harness'}
+                    : '로컬 검증'}
               </StatusBadge>
               <StatusBadge variant={validation?.valid ? 'success' : 'danger'}>
-                {validation?.valid ? 'Valid' : 'Invalid'}
+                {validation?.valid ? '검증 통과' : '검증 필요'}
               </StatusBadge>
               <span>{analysisResult.protocolVersion}</span>
             </div>
@@ -138,10 +166,11 @@ export function AnalysisInspectorPage({
           {!readOnly && (
             <button
               type="button"
-              className="w-fit rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-wait disabled:text-gray-400"
+              className="inline-flex min-h-10 w-fit items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-wait disabled:text-slate-400"
               disabled={analysisStatus === 'analyzing'}
               onClick={onRunAnalysis}
             >
+              <RefreshCw className={`h-4 w-4 ${analysisStatus === 'analyzing' ? 'animate-spin' : ''}`} />
               {analysisStatus === 'analyzing' ? '분석 중' : '다시 분석'}
             </button>
           )}
@@ -150,20 +179,22 @@ export function AnalysisInspectorPage({
         <SummaryGrid
           analysisResult={analysisResult}
           decisionLogCount={decisionLogs.length}
+          publicationReadiness={publicationReadiness}
           qualityScore={qualityReport?.score ?? 0}
           validationErrorCount={validation?.errors.length ?? 0}
         />
 
-        <div className="mt-6 border-b border-gray-200">
+        <div className="mt-6 rounded-lg border border-slate-200 bg-white p-1 shadow-sm">
           <div className="flex gap-1 overflow-x-auto">
             {(Object.keys(tabLabels) as InspectorTab[]).map((tab) => (
               <button
                 type="button"
                 key={tab}
+                data-testid={`inspector-tab-${tab}`}
                 className={`whitespace-nowrap border-b-2 px-4 py-2 text-sm transition-colors ${
                   activeTab === tab
-                    ? 'border-blue-600 text-gray-900'
-                    : 'border-transparent text-gray-500 hover:text-gray-900'
+                    ? 'border-blue-600 bg-blue-50 text-blue-700'
+                    : 'border-transparent text-slate-500 hover:bg-slate-50 hover:text-slate-900'
                 }`}
                 onClick={() => setActiveTab(tab)}
               >
@@ -178,6 +209,7 @@ export function AnalysisInspectorPage({
             <QualityGateTab
               drafts={drafts}
               onOpenAction={openQualityAction}
+              publicationReadiness={publicationReadiness}
               qualityReport={qualityReport}
             />
           )}
@@ -208,33 +240,46 @@ export function AnalysisInspectorPage({
 function SummaryGrid({
   analysisResult,
   decisionLogCount,
+  publicationReadiness,
   qualityScore,
   validationErrorCount,
 }: {
   analysisResult: PlanMergeAnalysisResult;
   decisionLogCount: number;
+  publicationReadiness: PublicationReadiness;
   qualityScore: number;
   validationErrorCount: number;
 }) {
   const items = [
-    { label: 'Quality Score', value: qualityScore },
-    { label: 'Normalized Ideas', value: analysisResult.normalizedIdeas.length },
-    { label: 'Decision Blocks', value: analysisResult.decisionBlocks.length },
-    { label: 'Final Sections', value: analysisResult.finalDocumentSections.length },
-    { label: 'Missing Sections', value: analysisResult.missingSections.length },
-    { label: 'Decision Logs', value: decisionLogCount },
-    { label: 'Warnings', value: analysisResult.warnings.length },
-    { label: 'Validation Errors', value: validationErrorCount },
+    { label: '문서 품질', value: qualityScore, icon: ShieldCheck },
+    { label: '아이디어', value: analysisResult.normalizedIdeas.length, icon: Sparkles },
+    { label: '결정 블록', value: analysisResult.decisionBlocks.length, icon: GitMerge },
+    {
+      label: '검토 완료',
+      value: `${publicationReadiness.approvedCount}/${publicationReadiness.requiredCount}`,
+      icon: CheckCircle2,
+    },
+    { label: '누락 섹션', value: analysisResult.missingSections.length, icon: AlertTriangle },
+    { label: '변경 기록', value: decisionLogCount, icon: History },
+    { label: '경고', value: analysisResult.warnings.length, icon: ClipboardList },
+    { label: '검증 오류', value: validationErrorCount, icon: Database },
   ];
 
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
-      {items.map((item) => (
-        <div key={item.label} className="rounded-md border border-gray-200 p-4">
-          <div className="text-xs text-gray-500">{item.label}</div>
-          <div className="mt-2 text-2xl text-gray-900">{item.value}</div>
+      {items.map((item) => {
+        const Icon = item.icon;
+
+        return (
+        <div key={item.label} className="lift-card rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-xs font-medium text-slate-500">{item.label}</div>
+            <Icon className="h-4 w-4 text-slate-300" />
+          </div>
+          <div className="mt-2 text-2xl font-semibold text-slate-950">{item.value}</div>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -242,31 +287,43 @@ function SummaryGrid({
 function QualityGateTab({
   drafts,
   onOpenAction,
+  publicationReadiness,
   qualityReport,
 }: {
   drafts: LocalDraftSubmission[];
   onOpenAction: (action: QualityAction) => void;
+  publicationReadiness: PublicationReadiness;
   qualityReport: AnalysisQualityReport;
 }) {
   const draftsById = useMemo(() => new Map(drafts.map((draft) => [draft.id, draft])), [drafts]);
 
   return (
     <div className="space-y-5">
-      <section className="rounded-md border border-gray-200 p-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="grid gap-4 lg:grid-cols-[1fr_auto_auto] lg:items-start">
           <div>
             <div className="mb-2 flex items-center gap-2">
-              <h3 className="text-lg text-gray-900">Quality Gate</h3>
+              <h3 className="text-lg font-semibold text-slate-950">문서 품질</h3>
               <StatusBadge variant={qualityBadgeVariant(qualityReport.level)}>
                 {qualityLabel(qualityReport.level)}
               </StatusBadge>
             </div>
-            <p className="max-w-3xl text-sm leading-relaxed text-gray-600">{qualityReport.summary}</p>
+            <p className="max-w-3xl text-sm leading-7 text-slate-600">{qualityReport.summary}</p>
           </div>
-          <div className="rounded-md border border-gray-100 px-5 py-4 text-center">
-            <div className="text-xs text-gray-500">품질 점수</div>
-            <div className="mt-1 text-4xl text-gray-900">{qualityReport.score}</div>
-            <div className="mt-1 text-xs text-gray-400">/ 100</div>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-5 py-4 text-center">
+            <div className="text-xs font-medium text-slate-500">문서 품질</div>
+            <div className="mt-1 text-4xl font-semibold text-slate-950">{qualityReport.score}</div>
+            <div className="mt-1 text-xs text-slate-400">/ 100</div>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-5 py-4 text-center">
+            <div className="text-xs font-medium text-slate-500">검토 완료도</div>
+            <div className="mt-1 text-4xl font-semibold text-slate-950">{publicationReadiness.reviewCompletion}</div>
+            <div className="mt-1 text-xs text-slate-400">%</div>
+            <div className="mt-2">
+              <StatusBadge variant={publicationBadgeVariant(publicationReadiness.level)}>
+                {publicationReadiness.label}
+              </StatusBadge>
+            </div>
           </div>
         </div>
       </section>
@@ -277,31 +334,31 @@ function QualityGateTab({
         ))}
       </section>
 
-      <section className="rounded-md border border-gray-200 p-4">
+      <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
         <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-sm text-gray-900">Next Actions</h3>
-          <span className="text-xs text-gray-400">{qualityReport.nextActions.length}개 액션</span>
+          <h3 className="text-sm font-semibold text-slate-950">다음 조치</h3>
+          <span className="text-xs text-slate-400">{qualityReport.nextActions.length}개 항목</span>
         </div>
         <div className="grid gap-3 lg:grid-cols-2">
           {qualityReport.nextActions.map((action) => (
-            <div key={action.id} className="rounded-md border border-gray-100 p-3">
+            <div key={action.id} className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
               <div className="mb-2 flex flex-wrap items-center gap-2">
                 <StatusBadge variant={actionPriorityVariant(action.priority)}>
                   {actionPriorityLabel(action.priority)}
                 </StatusBadge>
-                <div className="text-sm text-gray-900">{action.title}</div>
+                <div className="text-sm font-semibold text-slate-950">{action.title}</div>
               </div>
               {action.target && (
                 <div className="mb-1 text-xs text-gray-500">{action.target}</div>
               )}
-              <p className="text-xs leading-relaxed text-gray-600">{action.detail}</p>
-              <div className="mt-2 rounded bg-gray-50 px-2 py-1 text-xs text-gray-500">
+              <p className="text-xs leading-6 text-slate-600">{action.detail}</p>
+              <div className="mt-2 rounded-md bg-white px-2 py-1 text-xs text-slate-500">
                 기대 효과: {action.expectedImpact}
               </div>
               {action.destination && (
                 <button
                   type="button"
-                  className="mt-3 rounded-md border border-gray-200 px-3 py-1.5 text-xs text-gray-700 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+                  className="mt-3 rounded-md border border-blue-100 bg-white px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-50"
                   onClick={() => onOpenAction(action)}
                 >
                   {actionDestinationLabel(action)}
@@ -313,9 +370,9 @@ function QualityGateTab({
       </section>
 
       <section className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-        <div className="rounded-md border border-gray-200 p-4">
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
           <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-sm text-gray-900">Review Findings</h3>
+            <h3 className="text-sm font-semibold text-slate-950">검토 필요 항목</h3>
             <StatusBadge variant={qualityReport.findings.length ? 'warning' : 'success'}>
               {qualityReport.findings.length}개
             </StatusBadge>
@@ -323,45 +380,45 @@ function QualityGateTab({
           {qualityReport.findings.length ? (
             <div className="space-y-2">
               {qualityReport.findings.map((finding) => (
-                <div key={finding.id} className="rounded-md border border-gray-100 p-3">
+                <div key={finding.id} className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
                   <div className="mb-1 flex flex-wrap items-center gap-2">
                     <StatusBadge variant={qualityBadgeVariant(finding.severity)}>
                       {qualityLabel(finding.severity)}
                     </StatusBadge>
-                    <div className="text-sm text-gray-900">{finding.title}</div>
+                    <div className="text-sm font-semibold text-slate-950">{finding.title}</div>
                   </div>
                   {finding.target && (
                     <div className="mb-1 text-xs text-gray-500">{finding.target}</div>
                   )}
-                  <p className="text-xs leading-relaxed text-gray-600">{finding.detail}</p>
+                  <p className="text-xs leading-6 text-slate-600">{finding.detail}</p>
                 </div>
               ))}
             </div>
           ) : (
-            <p className="text-sm text-gray-600">즉시 조치가 필요한 품질 이슈가 없습니다.</p>
+            <p className="text-sm text-slate-600">즉시 조치가 필요한 품질 이슈가 없습니다.</p>
           )}
         </div>
 
-        <div className="rounded-md border border-gray-200 p-4">
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
           <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-sm text-gray-900">Draft Coverage</h3>
-            <span className="text-xs text-gray-400">{qualityReport.sourceCoverageByDraft.length}개 초안</span>
+            <h3 className="text-sm font-semibold text-slate-950">초안 반영 상태</h3>
+            <span className="text-xs text-slate-400">{qualityReport.sourceCoverageByDraft.length}개 초안</span>
           </div>
           <div className="space-y-2">
             {qualityReport.sourceCoverageByDraft.map((item) => {
               const draft = draftsById.get(item.draftId);
 
               return (
-                <div key={item.draftId} className="rounded-md bg-gray-50 px-3 py-2">
+                <div key={item.draftId} className="rounded-lg bg-slate-50 px-3 py-2">
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
-                      <div className="truncate text-sm text-gray-900">
+                      <div className="truncate text-sm font-medium text-slate-950">
                         {draft ? `${draft.authorName} · ${draft.taskTitle}` : item.draftId}
                       </div>
-                      <div className="mt-0.5 text-xs text-gray-500">{item.draftId}</div>
+                      <div className="mt-0.5 text-xs text-slate-500">{item.draftId}</div>
                     </div>
                     <StatusBadge variant={item.ideaCount ? 'success' : 'warning'}>
-                      {item.ideaCount} ideas
+                      {item.ideaCount}개 아이디어
                     </StatusBadge>
                   </div>
                 </div>
@@ -371,22 +428,22 @@ function QualityGateTab({
         </div>
       </section>
 
-      <section className="rounded-md border border-gray-200 p-4">
+      <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
         <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-sm text-gray-900">Section Coverage</h3>
-          <span className="text-xs text-gray-400">기본 12개 섹션</span>
+          <h3 className="text-sm font-semibold text-slate-950">섹션 반영 상태</h3>
+          <span className="text-xs text-slate-400">기본 12개 섹션</span>
         </div>
         <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
           {qualityReport.sectionCoverage.map((section) => (
-            <div key={section.sectionKey} className="rounded-md border border-gray-100 p-3">
+            <div key={section.sectionKey} className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
               <div className="mb-2 flex items-start justify-between gap-3">
-                <div className="text-sm text-gray-900">{section.title}</div>
+                <div className="text-sm font-medium text-slate-950">{section.title}</div>
                 <StatusBadge variant={section.hasFinalSection ? 'success' : 'warning'}>
                   {section.hasFinalSection ? '작성됨' : '누락'}
                 </StatusBadge>
               </div>
-              <div className="text-xs text-gray-500">
-                ideas {section.ideaCount} · decisions {section.decisionBlockCount}
+              <div className="text-xs text-slate-500">
+                아이디어 {section.ideaCount}개 · 결정 {section.decisionBlockCount}개
               </div>
             </div>
           ))}
@@ -427,7 +484,7 @@ function DecisionLogsTab({ decisionLogs }: { decisionLogs: LocalDecisionLog[] })
   if (!orderedLogs.length) {
     return (
       <div className="rounded-md border border-gray-200 p-5">
-        <h3 className="text-sm text-gray-900">Decision Logs</h3>
+        <h3 className="text-sm text-gray-900">변경 기록</h3>
         <p className="mt-2 text-sm leading-relaxed text-gray-600">
           아직 사용자가 변경한 선택안이 없습니다. 병합 화면에서 대안 또는 충돌 의견을 선택안으로 적용하면 이곳에 기록됩니다.
         </p>
@@ -450,12 +507,12 @@ function DecisionLogsTab({ decisionLogs }: { decisionLogs: LocalDecisionLog[] })
                 run {log.analysisRunId} · {log.id} · {log.decisionBlockId} · {log.createdAtLabel}
               </div>
             </div>
-            <StatusBadge variant="warning">사용자 변경</StatusBadge>
+            <StatusBadge variant="warning">사용자 선택</StatusBadge>
           </div>
 
           <div className="grid gap-3 lg:grid-cols-2">
             <div className="rounded-md bg-gray-50 p-3">
-              <div className="mb-1 text-xs text-gray-500">변경 전</div>
+              <div className="mb-1 text-xs text-gray-500">이전 선택안</div>
               <p className="text-sm leading-relaxed text-gray-700">
                 {log.beforeValue ?? '기존 선택안 없음'}
               </p>
@@ -464,14 +521,14 @@ function DecisionLogsTab({ decisionLogs }: { decisionLogs: LocalDecisionLog[] })
               )}
             </div>
             <div className="rounded-md border border-blue-100 bg-blue-50/40 p-3">
-              <div className="mb-1 text-xs text-blue-700">변경 후</div>
+              <div className="mb-1 text-xs text-blue-700">적용한 선택안</div>
               <p className="text-sm leading-relaxed text-gray-900">{log.afterValue}</p>
               <div className="mt-2 text-xs text-blue-500">{log.afterOptionId}</div>
             </div>
           </div>
 
           <div className="mt-3 rounded-md border border-gray-100 p-3">
-            <div className="mb-1 text-xs text-gray-500">reason</div>
+            <div className="mb-1 text-xs text-gray-500">변경 이유</div>
             <p className="text-xs leading-relaxed text-gray-600">{log.reason}</p>
           </div>
         </div>
@@ -514,7 +571,7 @@ function IdeasTab({
                 <div className="mt-1">{draft?.taskTitle ?? idea.topic}</div>
               </div>
               <div className="rounded-md border border-gray-100 p-3">
-                <div className="mb-1 text-xs text-gray-500">sourceExcerpt</div>
+                <div className="mb-1 text-xs text-gray-500">원문 근거</div>
                 <p className="text-sm leading-relaxed text-gray-700">{idea.sourceExcerpt}</p>
               </div>
             </div>
@@ -582,9 +639,9 @@ function DecisionBlocksTab({
       <section className="rounded-md border border-gray-200 p-3">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <h3 className="text-sm text-gray-900">Decision Block 필터</h3>
+            <h3 className="text-sm text-gray-900">결정 블록 필터</h3>
             <p className="mt-1 text-xs text-gray-500">
-              Quality Gate 액션에서 넘어오면 관련 결정만 좁혀서 봅니다.
+              품질 게이트에서 넘어오면 관련 결정만 좁혀서 봅니다.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -608,7 +665,7 @@ function DecisionBlocksTab({
 
       {filteredBlocks.length === 0 && (
         <div className="rounded-md border border-gray-200 p-5 text-sm text-gray-600">
-          {decisionFilterLabel(decisionFilter)} 조건에 해당하는 Decision Block이 없습니다.
+          {decisionFilterLabel(decisionFilter)} 조건에 해당하는 결정 블록이 없습니다.
         </div>
       )}
 
@@ -631,21 +688,21 @@ function DecisionBlocksTab({
             <div>
               <div className="text-sm text-gray-900">{block.topic}</div>
               <div className="mt-1 text-xs text-gray-500">
-                {block.id} · {sectionTitle(block.sectionKey)} · confidence {Math.round(block.confidence * 100)}%
+                {block.id} · {sectionTitle(block.sectionKey)} · 신뢰도 {Math.round(block.confidence * 100)}%
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
-              {focused && <StatusBadge variant="success">Action Focus</StatusBadge>}
+              {focused && <StatusBadge variant="success">집중 검토</StatusBadge>}
               <StatusBadge variant={block.needsHumanReview ? 'warning' : 'success'}>
                 {block.needsHumanReview ? '검토 필요' : '자동 선택'}
               </StatusBadge>
               <StatusBadge variant={block.conflictLevel === 'none' ? 'default' : 'warning'}>
-                conflict {block.conflictLevel}
+                {conflictLevelDisplay(block.conflictLevel)}
               </StatusBadge>
             </div>
           </div>
           <div className="mb-4 rounded-md bg-gray-50 p-3">
-            <div className="mb-1 text-xs text-gray-500">selectionReason</div>
+            <div className="mb-1 text-xs text-gray-500">선택 근거</div>
             <p className="text-sm leading-relaxed text-gray-700">{block.selectionReason}</p>
           </div>
           <div className="space-y-3">
@@ -680,11 +737,11 @@ function DecisionOptionRow({
         <div>
           <div className="text-sm text-gray-900">{option.content}</div>
           <div className="mt-1 text-xs text-gray-500">
-            {option.id} · {option.optionType}
+            {option.id} · {optionTypeDisplay(option.optionType)}
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          {selected && <StatusBadge variant="success">selected</StatusBadge>}
+          {selected && <StatusBadge variant="success">선택됨</StatusBadge>}
           {option.severity && <StatusBadge variant="warning">{option.severity}</StatusBadge>}
         </div>
       </div>
@@ -722,9 +779,9 @@ function ValidationTab({
         validationFocus === 'errors' ? 'border-red-200 bg-red-50/30' : 'border-gray-200'
       }`}>
         <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-sm text-gray-900">Validation Errors</h3>
+          <h3 className="text-sm text-gray-900">검증 오류</h3>
           <div className="flex items-center gap-2">
-            {validationFocus === 'errors' && <StatusBadge variant="danger">Action Focus</StatusBadge>}
+            {validationFocus === 'errors' && <StatusBadge variant="danger">검토 위치</StatusBadge>}
             <StatusBadge variant={validationErrors.length ? 'danger' : 'success'}>
               {validationErrors.length ? `${validationErrors.length}개` : '0개'}
             </StatusBadge>
@@ -747,9 +804,9 @@ function ValidationTab({
         validationFocus === 'warnings' ? 'border-amber-200 bg-amber-50/30' : 'border-gray-200'
       }`}>
         <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-sm text-gray-900">Warnings</h3>
+          <h3 className="text-sm text-gray-900">경고</h3>
           <div className="flex items-center gap-2">
-            {validationFocus === 'warnings' && <StatusBadge variant="warning">Action Focus</StatusBadge>}
+            {validationFocus === 'warnings' && <StatusBadge variant="warning">검토 위치</StatusBadge>}
             <StatusBadge variant={analysisResult.warnings.length ? 'warning' : 'success'}>
               {analysisResult.warnings.length}개
             </StatusBadge>
@@ -757,9 +814,12 @@ function ValidationTab({
         </div>
         {analysisResult.warnings.length ? (
           <div className="space-y-2">
-            {analysisResult.warnings.map((warning) => (
-              <div key={warning} className="rounded-md bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
-                {warning}
+            {analysisResult.warnings.map((warning, index) => (
+              <div
+                key={`${index}:${formatWarningText(warning)}`}
+                className="rounded-md bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800"
+              >
+                {formatWarningText(warning)}
               </div>
             ))}
           </div>
@@ -772,9 +832,9 @@ function ValidationTab({
         validationFocus === 'missing_sections' ? 'border-amber-200 bg-amber-50/30' : 'border-gray-200'
       }`}>
         <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-sm text-gray-900">Missing Sections</h3>
+          <h3 className="text-sm text-gray-900">누락 섹션</h3>
           <div className="flex items-center gap-2">
-            {validationFocus === 'missing_sections' && <StatusBadge variant="warning">Action Focus</StatusBadge>}
+            {validationFocus === 'missing_sections' && <StatusBadge variant="warning">검토 위치</StatusBadge>}
             <StatusBadge variant={analysisResult.missingSections.length ? 'warning' : 'success'}>
               {analysisResult.missingSections.length}개
             </StatusBadge>
@@ -790,6 +850,26 @@ function ValidationTab({
       </section>
     </div>
   );
+}
+
+function formatWarningText(warning: unknown) {
+  if (typeof warning === 'string') {
+    return warning;
+  }
+
+  if (typeof warning === 'object' && warning !== null && !Array.isArray(warning)) {
+    const record = warning as Record<string, unknown>;
+    const type = typeof record.type === 'string' && record.type.trim()
+      ? `[${record.type.trim()}] `
+      : '';
+    const message = typeof record.message === 'string' && record.message.trim()
+      ? record.message.trim()
+      : JSON.stringify(record);
+
+    return `${type}${message}`;
+  }
+
+  return String(warning);
 }
 
 function sectionTitle(sectionKey: string) {
@@ -831,6 +911,34 @@ function decisionFilterLabel(filter: QualityDecisionFilter) {
   return '전체';
 }
 
+function conflictLevelDisplay(level: ProtocolDecisionBlock['conflictLevel']) {
+  if (level === 'none') {
+    return '충돌 없음';
+  }
+
+  if (level === 'high') {
+    return '충돌 높음';
+  }
+
+  if (level === 'medium') {
+    return '충돌 보통';
+  }
+
+  return '충돌 낮음';
+}
+
+function optionTypeDisplay(type: ProtocolDecisionOption['optionType']) {
+  if (type === 'selected') {
+    return '선택안';
+  }
+
+  if (type === 'alternative') {
+    return '대안';
+  }
+
+  return '충돌 의견';
+}
+
 function actionDestinationLabel(action: QualityAction) {
   if (action.destination?.tab === 'decisions') {
     return '관련 결정 보기';
@@ -849,14 +957,20 @@ function actionDestinationLabel(action: QualityAction) {
 
 function qualityLabel(level: QualityLevel) {
   if (level === 'ready') {
-    return 'Ready';
+    return '양호';
   }
 
   if (level === 'review') {
-    return 'Review';
+    return '보완 필요';
   }
 
-  return 'Blocked';
+  return '차단';
+}
+
+function publicationBadgeVariant(level: PublicationReadiness['level']): 'success' | 'warning' | 'danger' {
+  if (level === 'ready') return 'success';
+  if (level === 'blocked') return 'danger';
+  return 'warning';
 }
 
 function qualityBadgeVariant(level: QualityLevel): 'success' | 'warning' | 'danger' {
@@ -885,14 +999,14 @@ function qualityBarClass(level: QualityLevel) {
 
 function actionPriorityLabel(priority: QualityActionPriority) {
   if (priority === 'now') {
-    return 'Now';
+    return '지금 처리';
   }
 
   if (priority === 'next') {
-    return 'Next';
+    return '다음 처리';
   }
 
-  return 'Later';
+  return '나중에';
 }
 
 function actionPriorityVariant(priority: QualityActionPriority): 'success' | 'warning' | 'danger' {

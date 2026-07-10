@@ -115,6 +115,7 @@ function metric(
 export function evaluateAnalysisQuality(
   payload: PlanMergeAnalysisPayload,
   result: PlanMergeAnalysisResult,
+  approvedBlockIds: string[] = [],
 ): AnalysisQualityReport {
   const validation = validatePlanMergeAnalysis(payload, result);
   const sectionKeys = documentSectionDefinitions.map((section) => section.key);
@@ -123,6 +124,7 @@ export function evaluateAnalysisQuality(
   const blocksBySection = groupBySection(result.decisionBlocks);
   const ideasByDraft = new Map<string, number>();
   const findings: QualityFinding[] = [];
+  const approvedBlockIdSet = new Set(approvedBlockIds);
 
   payload.drafts.forEach((draft) => {
     ideasByDraft.set(draft.id, 0);
@@ -140,6 +142,9 @@ export function evaluateAnalysisQuality(
   const reviewBlocks = result.decisionBlocks.filter((block) => block.needsHumanReview);
   const conflictBlocks = result.decisionBlocks.filter((block) => block.conflictLevel !== 'none');
   const lowConfidenceBlocks = result.decisionBlocks.filter((block) => block.confidence < 0.65);
+  const unresolvedReviewBlocks = reviewBlocks.filter((block) => !approvedBlockIdSet.has(block.id));
+  const unresolvedConflictBlocks = conflictBlocks.filter((block) => !approvedBlockIdSet.has(block.id));
+  const unresolvedLowConfidenceBlocks = lowConfidenceBlocks.filter((block) => !approvedBlockIdSet.has(block.id));
   const sourceDraftsUsed = [...ideasByDraft.values()].filter((count) => count > 0).length;
   const finalSectionsWithContent = result.finalDocumentSections.filter((section) => section.content.trim().length >= 20);
   const missingSectionTitles = result.missingSections.map(sectionTitle);
@@ -152,7 +157,7 @@ export function evaluateAnalysisQuality(
   const metrics = [
     metric(
       'schema_validity',
-      'Schema Validity',
+      '응답 구조',
       validation.valid ? 1 : 0,
       1,
       'AI 응답이 PlanMerge 프로토콜을 지키는지 확인합니다.',
@@ -160,35 +165,35 @@ export function evaluateAnalysisQuality(
     ),
     metric(
       'section_coverage',
-      'Section Coverage',
+      '섹션 채움',
       finalSectionKeys.size,
       sectionKeys.length,
       '기본 기획서 12개 섹션 중 최종 문서가 채운 비율입니다.',
     ),
     metric(
       'source_coverage',
-      'Source Coverage',
+      '출처 반영',
       sourceDraftsUsed,
       Math.max(payload.drafts.length, 1),
       '입력 초안들이 분석 결과에 실제로 반영됐는지 봅니다.',
     ),
     metric(
       'option_traceability',
-      'Option Traceability',
+      '근거 추적',
       optionsWithSources.length,
       Math.max(decisionOptions.length, 1),
       '선택지마다 원본 아이디어 근거가 연결되어 있는지 봅니다.',
     ),
     metric(
       'decision_integrity',
-      'Decision Integrity',
+      '선택 근거',
       Math.min(blocksWithSelectedOption.length, blocksWithReason.length),
       Math.max(result.decisionBlocks.length, 1),
-      'Decision Block에 선택안과 선택 이유가 충분히 있는지 봅니다.',
+      '결정 블록에 선택안과 선택 이유가 충분히 있는지 봅니다.',
     ),
     metric(
       'document_completeness',
-      'Document Completeness',
+      '문서 완성',
       finalSectionsWithContent.length,
       Math.max(result.finalDocumentSections.length, 1),
       '최종 문서 섹션이 빈 문장이나 너무 짧은 문장으로 끝나지 않는지 봅니다.',
@@ -209,7 +214,7 @@ export function evaluateAnalysisQuality(
       id: 'no_input_drafts',
       severity: 'blocked',
       title: '분석할 초안 없음',
-      detail: '사용 가능한 초안이 없어 Decision Block과 최종 문서를 만들 수 없습니다.',
+      detail: '사용 가능한 초안이 없어 결정 블록과 최종 문서를 만들 수 없습니다.',
     });
   }
 
@@ -218,7 +223,7 @@ export function evaluateAnalysisQuality(
       id: 'no_analysis_content',
       severity: 'blocked',
       title: '분석 결과 비어 있음',
-      detail: '초안은 있지만 추출 아이디어, Decision Block, 최종 문서 섹션 중 하나 이상이 비어 있습니다.',
+      detail: '초안은 있지만 추출 아이디어, 결정 블록, 최종 문서 섹션 중 하나 이상이 비어 있습니다.',
     });
   }
 
@@ -240,7 +245,7 @@ export function evaluateAnalysisQuality(
     });
   }
 
-  conflictBlocks.forEach((block) => {
+  unresolvedConflictBlocks.forEach((block) => {
     findings.push({
       id: `conflict_${block.id}`,
       severity: 'review',
@@ -250,25 +255,25 @@ export function evaluateAnalysisQuality(
     });
   });
 
-  lowConfidenceBlocks.forEach((block) => {
+  unresolvedLowConfidenceBlocks.forEach((block) => {
     findings.push({
       id: `low_confidence_${block.id}`,
       severity: 'review',
       title: '낮은 선택 신뢰도',
-      detail: `AI confidence가 ${Math.round(block.confidence * 100)}%입니다.`,
+      detail: `AI 선택 신뢰도가 ${Math.round(block.confidence * 100)}%입니다.`,
       target: `${sectionTitle(block.sectionKey)} · ${block.topic}`,
     });
   });
 
   const reviewRatio = result.decisionBlocks.length > 0
-    ? reviewBlocks.length / result.decisionBlocks.length
+    ? unresolvedReviewBlocks.length / result.decisionBlocks.length
     : 0;
   if (reviewRatio >= 0.5) {
     findings.push({
       id: 'review_pressure',
       severity: 'review',
       title: '검토 필요 항목이 많음',
-      detail: 'Decision Block 절반 이상이 사람 검토를 요구합니다. 공통 기준을 더 구체화한 뒤 재분석하는 것이 좋습니다.',
+      detail: '결정 블록 절반 이상이 사람 검토를 요구합니다. 공통 기준을 더 구체화한 뒤 재분석하는 것이 좋습니다.',
     });
   }
 
@@ -300,12 +305,13 @@ export function evaluateAnalysisQuality(
   }
 
   const nextActions = buildNextActions({
-    conflictBlocks,
+    conflictBlocks: unresolvedConflictBlocks,
     finalSectionsWithContentCount: finalSectionsWithContent.length,
-    lowConfidenceBlocks,
+    lowConfidenceBlocks: unresolvedLowConfidenceBlocks,
     missingSectionTitles,
     payloadDraftCount: payload.drafts.length,
     result,
+    reviewBlocks: unresolvedReviewBlocks,
     sourceDraftsUsed,
     inputDraftCount,
     validationErrorCount: validation.errors.length,
@@ -339,6 +345,7 @@ function buildNextActions({
   missingSectionTitles,
   payloadDraftCount,
   result,
+  reviewBlocks,
   sourceDraftsUsed,
   inputDraftCount,
   validationErrorCount,
@@ -349,12 +356,12 @@ function buildNextActions({
   missingSectionTitles: string[];
   payloadDraftCount: number;
   result: PlanMergeAnalysisResult;
+  reviewBlocks: PlanMergeAnalysisResult['decisionBlocks'];
   sourceDraftsUsed: number;
   inputDraftCount: number;
   validationErrorCount: number;
 }) {
   const actions: QualityAction[] = [];
-  const reviewBlocks = result.decisionBlocks.filter((block) => block.needsHumanReview);
   const reviewRatio = result.decisionBlocks.length > 0
     ? reviewBlocks.length / result.decisionBlocks.length
     : 0;
@@ -381,7 +388,7 @@ function buildNextActions({
       priority: 'now',
       title: '초안 먼저 추가',
       detail: '분석 가능한 초안이 없습니다. 최소 2개 이상의 AI 초안을 입력해야 선택안과 대안을 비교할 수 있습니다.',
-      expectedImpact: 'Decision Block 생성 가능',
+      expectedImpact: '결정 블록 생성 가능',
       destination: {
         tab: 'ideas',
       },
@@ -394,7 +401,7 @@ function buildNextActions({
       priority: 'now',
       title: '반영되지 않은 초안 확인',
       detail: `${payloadDraftCount - sourceDraftsUsed}개 초안에서 아이디어가 추출되지 않았습니다. 초안 내용이 너무 짧거나 섹션 기준과 맞지 않는지 확인해야 합니다.`,
-      expectedImpact: 'Source Coverage 개선',
+      expectedImpact: '출처 반영률 개선',
       destination: {
         tab: 'quality',
       },
@@ -406,8 +413,8 @@ function buildNextActions({
       id: 'tighten_project_criteria',
       priority: 'now',
       title: '공통 기준을 더 구체화',
-      detail: '검토 필요 Decision Block이 절반 이상입니다. MVP 범위, 제외 기능, 우선순위 기준을 더 명확히 적고 다시 분석하는 편이 좋습니다.',
-      expectedImpact: '재분석 시 confidence와 자동 선택률 개선',
+      detail: '검토 필요 결정 블록이 절반 이상입니다. MVP 범위, 제외 기능, 우선순위 기준을 더 명확히 적고 다시 분석하는 편이 좋습니다.',
+      expectedImpact: '재분석 시 선택 신뢰도와 자동 선택률 개선',
       destination: {
         tab: 'decisions',
         decisionFilter: 'needs_review',
@@ -439,7 +446,7 @@ function buildNextActions({
       priority: 'next',
       title: '누락 섹션 보강',
       detail: `${missingSectionTitles.length}개 섹션 누락: ${missingSectionTitles.slice(0, 5).join(', ')}${missingSectionTitles.length > 5 ? ' 외' : ''}. 추가 작성이 필요합니다.`,
-      expectedImpact: 'Section Coverage와 Document Completeness 개선',
+      expectedImpact: '섹션 채움과 문서 완성도 개선',
       destination: {
         tab: 'validation',
         validationFocus: 'missing_sections',
@@ -452,7 +459,7 @@ function buildNextActions({
       id: `review_low_confidence_${block.id}`,
       priority: 'next',
       title: '낮은 신뢰도 선택 재검토',
-      detail: `AI confidence가 ${Math.round(block.confidence * 100)}%입니다. 출처 초안과 선택 이유가 실제 기준에 맞는지 확인하세요.`,
+      detail: `AI 선택 신뢰도가 ${Math.round(block.confidence * 100)}%입니다. 출처 초안과 선택 이유가 실제 기준에 맞는지 확인하세요.`,
       expectedImpact: '선택 근거 품질 개선',
       target: `${sectionTitle(block.sectionKey)} · ${block.topic}`,
       destination: {
@@ -468,8 +475,8 @@ function buildNextActions({
       id: 'repair_option_sources',
       priority: 'next',
       title: '선택지 출처 연결 보강',
-      detail: `${optionsMissingSources.length}개 선택지가 sourceIdeaIds를 갖지 않습니다. 출처 추적이 약하면 사용자 신뢰가 떨어집니다.`,
-      expectedImpact: 'Option Traceability 개선',
+      detail: `${optionsMissingSources.length}개 선택지에 원문 아이디어 연결이 없습니다. 출처 추적이 약하면 사용자 신뢰가 떨어집니다.`,
+      expectedImpact: '근거 추적성 개선',
       destination: {
         tab: 'decisions',
         decisionFilter: 'all',
@@ -481,8 +488,8 @@ function buildNextActions({
     actions.push({
       id: 'approve_and_export',
       priority: 'later',
-      title: '승인 후 공유',
-      detail: '품질 지표가 안정적입니다. 충돌 항목만 최종 확인한 뒤 Markdown 또는 워크스페이스로 내보내면 됩니다.',
+      title: '최종본 내보내기',
+      detail: '문서 품질과 필수 결정 검토가 완료됐습니다. Markdown 또는 워크스페이스로 내보낼 수 있습니다.',
       expectedImpact: '사용자 테스트 가능한 산출물 확보',
     });
   }
@@ -545,11 +552,11 @@ function conflictLevelLabel(level: PlanMergeAnalysisResult['decisionBlocks'][num
 
 function qualitySummary(level: QualityLevel) {
   if (level === 'ready') {
-    return '기본 구조, 근거 추적, 문서 완성도가 충분합니다. 충돌 항목만 확인하면 공유 가능한 상태입니다.';
+    return '문서 구조, 근거 추적, 섹션 완성도를 기준으로 한 품질 점수입니다. 결정 승인 여부는 공유 준비 상태에서 별도로 확인합니다.';
   }
 
   if (level === 'review') {
-    return '결과는 사용할 수 있지만 누락 섹션, 낮은 신뢰도, 충돌 항목을 먼저 검토해야 합니다.';
+    return '문서 구조는 사용할 수 있지만 누락 섹션 또는 출처 반영 상태를 보완해야 합니다. 결정 승인 여부는 공유 준비 상태에서 별도로 확인합니다.';
   }
 
   return '구조 오류 또는 근거 부족이 커서 실무 문서로 쓰기 전에 재분석이 필요합니다.';
