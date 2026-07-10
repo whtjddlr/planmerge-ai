@@ -28,6 +28,7 @@ import { checkRateLimit, getClientKey } from '@/server/rateLimit';
 
 // 요청 1건이 초안 수만큼의 GMS 호출을 발생시키므로 보수적으로 제한한다.
 const RATE_LIMIT = { limit: 5, windowMs: 60_000 };
+const NORMALIZE_CONCURRENCY = 4;
 
 const normalizedIdeaTypes = new Set<NormalizedIdeaType>([
   'problem',
@@ -49,6 +50,46 @@ const normalizedIdeaIntents = new Set<NormalizedIdeaIntent>([
   'assume',
   'question',
 ]);
+const decisionOptionTypes = new Set<ProtocolDecisionOption['optionType']>([
+  'selected',
+  'alternative',
+  'conflict',
+]);
+const conflictSeverities = new Set<NonNullable<ProtocolDecisionOption['severity']>>([
+  'low',
+  'medium',
+  'high',
+]);
+
+function normalizeWarnings(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map(formatWarning)
+    .filter((warning): warning is string => Boolean(warning?.trim()));
+}
+
+function formatWarning(value: unknown): string | undefined {
+  if (typeof value === 'string') {
+    return value.trim();
+  }
+
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>;
+    const type = typeof record.type === 'string' && record.type.trim()
+      ? `[${record.type.trim()}] `
+      : '';
+    const message = typeof record.message === 'string' && record.message.trim()
+      ? record.message.trim()
+      : JSON.stringify(record);
+
+    return `${type}${message}`.trim();
+  }
+
+  return undefined;
+}
 
 function buildFallback(payload: PlanMergeAnalysisPayload, warning: string): PlanMergeAnalysisResult {
   const fallback = runLocalPlanMergeHarness(payload);
@@ -60,26 +101,58 @@ function buildFallback(payload: PlanMergeAnalysisPayload, warning: string): Plan
 }
 
 async function normalizeDrafts(payload: PlanMergeAnalysisPayload) {
-  const normalizeResults = await Promise.all(
-    payload.drafts
-      .filter((draft) => draft.rawText.trim())
-      .map(async (draft) => {
-        const rawResult = await callGmsJson<DraftNormalizeResult>(
-          buildDraftNormalizePrompt(payload.project, draft),
-          { maxOutputTokens: 4000 },
-        );
-        const result = normalizeDraftProtocolResult(draft, rawResult);
-        const validation = validateDraftNormalizeResult(draft, result);
+  const drafts = payload.drafts.filter((draft) => draft.rawText.trim());
+  const normalizedIdeas: NormalizedIdea[] = [];
+  const warnings: string[] = [];
+  let fallbackCount = 0;
 
-        if (!validation.valid) {
-          throw new Error(`Normalize validation failed for ${draft.id}: ${validation.errors.join(', ')}`);
+  for (let index = 0; index < drafts.length; index += NORMALIZE_CONCURRENCY) {
+    const batch = drafts.slice(index, index + NORMALIZE_CONCURRENCY);
+    const batchResults = await Promise.all(
+      batch.map(async (draft) => {
+        try {
+          const rawResult = await callGmsJson<DraftNormalizeResult>(
+            buildDraftNormalizePrompt(payload.project, draft),
+            { maxOutputTokens: 6000 },
+          );
+          const result = normalizeDraftProtocolResult(draft, rawResult);
+          const validation = validateDraftNormalizeResult(draft, result);
+
+          if (!validation.valid) {
+            throw new Error(`Normalize validation failed for ${draft.id}: ${validation.errors.join(', ')}`);
+          }
+
+          return {
+            normalizedIdeas: result.normalizedIdeas,
+            warning: undefined,
+          };
+        } catch (error) {
+          console.error(`[analyze/planmerge] normalize failed for ${draft.id}:`, error);
+
+          const fallback = runLocalPlanMergeHarness({
+            project: payload.project,
+            drafts: [draft],
+          });
+
+          return {
+            normalizedIdeas: fallback.normalizedIdeas,
+            warning: `${draft.authorName}의 "${draft.taskTitle}" 초안은 GMS 정규화 실패로 로컬 규칙을 사용했습니다.`,
+          };
         }
-
-        return result.normalizedIdeas;
       }),
-  );
+    );
 
-  return normalizeResults.flat();
+    batchResults.forEach((result) => {
+      normalizedIdeas.push(...result.normalizedIdeas);
+
+      if (result.warning) {
+        warnings.push(result.warning);
+        fallbackCount += 1;
+      }
+    });
+  }
+
+  return { attemptedCount: drafts.length, fallbackCount, normalizedIdeas, warnings };
 }
 
 function normalizeDraftProtocolResult(
@@ -91,7 +164,7 @@ function normalizeDraftProtocolResult(
   return {
     protocolVersion: '0.1',
     source: result.source,
-    warnings: Array.isArray(result.warnings) ? result.warnings : [],
+    warnings: normalizeWarnings(result.warnings),
     normalizedIdeas: (Array.isArray(result.normalizedIdeas) ? result.normalizedIdeas : [])
       .map((idea, index) => {
         const fallbackId = `${draft.id}_idea_${index + 1}`;
@@ -248,10 +321,134 @@ function postProcessMergeResult(
     ensureFinalDocumentCoverage(
       ensureDecisionBlockCoverage(
         payload,
-        ensureMergeUsesCanonicalIdeas(result, normalizedIdeas),
+        ensureCanonicalDecisionOptions(
+          ensureMergeUsesCanonicalIdeas({
+            ...result,
+            warnings: normalizeWarnings(result.warnings),
+          }, normalizedIdeas),
+        ),
       ),
     ),
   );
+}
+
+function ensureCanonicalDecisionOptions(result: PlanMergeAnalysisResult): PlanMergeAnalysisResult {
+  let changed = false;
+  const decisionBlocks = result.decisionBlocks.map((block) => {
+    if (!block.options.length) {
+      return block;
+    }
+
+    const selectedPointerIndex = block.options.findIndex((option) => option.id === block.selectedOptionId);
+    let options = block.options.map((option, index) => {
+      const optionType = canonicalDecisionOptionType(
+        option.optionType,
+        index === selectedPointerIndex || (selectedPointerIndex < 0 && index === 0),
+      );
+      const severity = optionType === 'conflict'
+        ? canonicalConflictSeverity(option.severity, block.conflictLevel)
+        : option.severity;
+
+      if (optionType !== option.optionType || severity !== option.severity) {
+        changed = true;
+      }
+
+      return {
+        ...option,
+        optionType,
+        severity,
+      };
+    });
+
+    let selectedIndex = options.findIndex((option) => option.id === block.selectedOptionId);
+    if (selectedIndex < 0) {
+      selectedIndex = options.findIndex((option) => option.optionType === 'selected');
+    }
+    if (selectedIndex < 0) {
+      selectedIndex = 0;
+    }
+
+    options = options.map((option, index) => {
+      const optionType: ProtocolDecisionOption['optionType'] = index === selectedIndex
+        ? 'selected'
+        : option.optionType === 'selected'
+          ? 'alternative'
+          : option.optionType;
+
+      if (optionType !== option.optionType) {
+        changed = true;
+      }
+
+      return {
+        ...option,
+        optionType,
+      };
+    });
+
+    const selectedOptionId = options[selectedIndex]?.id ?? block.selectedOptionId;
+    if (selectedOptionId !== block.selectedOptionId) {
+      changed = true;
+    }
+
+    return {
+      ...block,
+      selectedOptionId,
+      options,
+      conflictLevel: inferConflictLevelFromOptions(options),
+      needsHumanReview: block.needsHumanReview || options.some((option) => option.optionType === 'conflict'),
+    };
+  });
+
+  if (!changed) {
+    return result;
+  }
+
+  return {
+    ...result,
+    decisionBlocks,
+    warnings: [
+      ...result.warnings,
+      'GMS decision option types were canonicalized to selected, alternative, or conflict.',
+    ],
+  };
+}
+
+function canonicalDecisionOptionType(
+  value: unknown,
+  preferSelected: boolean,
+): ProtocolDecisionOption['optionType'] {
+  if (decisionOptionTypes.has(value as ProtocolDecisionOption['optionType'])) {
+    return value as ProtocolDecisionOption['optionType'];
+  }
+
+  if (preferSelected) {
+    return 'selected';
+  }
+
+  const normalized = typeof value === 'string' ? value.toLowerCase() : '';
+  if (/selected|accepted|chosen|primary|winner/.test(normalized)) {
+    return 'selected';
+  }
+  if (/conflict|contradict|incompatible|blocked|against/.test(normalized)) {
+    return 'conflict';
+  }
+
+  return 'alternative';
+}
+
+function canonicalConflictSeverity(
+  value: unknown,
+  fallbackLevel: ProtocolDecisionBlock['conflictLevel'],
+): NonNullable<ProtocolDecisionOption['severity']> {
+  if (conflictSeverities.has(value as NonNullable<ProtocolDecisionOption['severity']>)) {
+    return value as NonNullable<ProtocolDecisionOption['severity']>;
+  }
+
+  if (fallbackLevel === 'low' || fallbackLevel === 'medium' || fallbackLevel === 'high') {
+    return fallbackLevel;
+  }
+
+  return 'medium';
 }
 
 function ensureDecisionBlockCoverage(
@@ -511,7 +708,21 @@ export async function POST(request: Request) {
   }
 
   try {
-    const normalizedIdeas = await normalizeDrafts(payload);
+    const normalization = await normalizeDrafts(payload);
+
+    if (
+      normalization.attemptedCount > 0 &&
+      normalization.fallbackCount === normalization.attemptedCount
+    ) {
+      const fallback = buildFallback(payload, '모든 초안의 GMS 정규화가 실패해 로컬 하네스를 사용했습니다.');
+
+      return NextResponse.json({
+        ...fallback,
+        warnings: [...fallback.warnings, ...normalization.warnings],
+      });
+    }
+
+    const { normalizedIdeas } = normalization;
     const mergePrompt = buildMergeNormalizedIdeasPrompt(payload, normalizedIdeas);
     const mergeResultRaw = await callGmsJson<PlanMergeAnalysisResult>(
       mergePrompt,
@@ -524,6 +735,7 @@ export async function POST(request: Request) {
       return NextResponse.json({
         ...mergeResult,
         source: 'gms',
+        warnings: [...mergeResult.warnings, ...normalization.warnings],
       } satisfies PlanMergeAnalysisResult);
     }
 
@@ -543,6 +755,7 @@ export async function POST(request: Request) {
       source: 'gms',
       warnings: [
         ...repairedResult.warnings,
+        ...normalization.warnings,
         '1차 merge 검증 실패 후 repair prompt로 복구했습니다.',
       ],
     } satisfies PlanMergeAnalysisResult);

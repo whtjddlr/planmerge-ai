@@ -1,9 +1,13 @@
+import type { ReactNode } from 'react';
 import { StatusBadge } from '../StatusBadge';
+import { AlertTriangle, CheckCircle2, ClipboardList, FileWarning, ShieldCheck } from 'lucide-react';
 import type { BadgeVariant, DocumentSectionData, SectionStatus } from '../../data/mergeResult';
+import type { PublicationReadiness } from '../../lib/publicationReadiness';
 
 type OpenQuestionsPageProps = {
   documentSections: DocumentSectionData[];
   onSelectSection: (sectionNumber: number) => void;
+  publicationReadiness: PublicationReadiness;
 };
 
 type QueueCategory = 'conflict' | 'review' | 'input' | 'ready';
@@ -22,41 +26,48 @@ type ReviewQueueItem = {
   conflictCount: number;
 };
 
-export function OpenQuestionsPage({ documentSections, onSelectSection }: OpenQuestionsPageProps) {
+export function OpenQuestionsPage({
+  documentSections,
+  onSelectSection,
+  publicationReadiness,
+}: OpenQuestionsPageProps) {
   const queueItems = documentSections
-    .map(createReviewQueueItem)
+    .map((section) => createReviewQueueItem(section, publicationReadiness))
     .sort((first, second) =>
       queuePriority(first.category) - queuePriority(second.category) ||
       first.sectionNumber - second.sectionNumber,
     );
-  const summary = createReviewSummary(queueItems);
+  const summary = createReviewSummary(queueItems, publicationReadiness);
 
   return (
-    <main className="h-full min-h-0 flex-1 overflow-y-auto bg-white">
+    <main className="h-full min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto max-w-6xl px-4 py-8 sm:px-8 lg:py-10">
         <div className="mb-8">
           <div className="mb-2 flex flex-wrap items-center gap-2">
-            <h2 className="text-2xl text-gray-900">Review Queue</h2>
+            <div className="grid h-9 w-9 place-items-center rounded-lg bg-slate-950 text-white">
+              <ClipboardList className="h-4 w-4" />
+            </div>
+            <h2 className="text-2xl font-semibold text-slate-950">검토 큐</h2>
             <StatusBadge variant={summary.readinessVariant}>{summary.readinessLabel}</StatusBadge>
           </div>
-          <p className="max-w-3xl text-sm leading-relaxed text-gray-600">
-            내보내기 전에 확인해야 할 충돌, 검토 필요, 입력 부족 섹션을 우선순위대로 정리합니다.
+          <p className="max-w-3xl text-sm leading-7 text-slate-600">
+            공유하거나 내보내기 전에 확인해야 할 충돌, 검토 필요, 입력 부족 섹션을 우선순위대로 정리합니다.
           </p>
         </div>
 
         <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          <SummaryTile label="완료" value={summary.readyCount} help={`${summary.totalCount}개 섹션 중`} />
-          <SummaryTile label="충돌" value={summary.conflictCount} help="먼저 해결" variant="danger" />
-          <SummaryTile label="검토 필요" value={summary.reviewCount} help="근거 확인" variant="warning" />
-          <SummaryTile label="입력 부족" value={summary.inputCount} help="초안 보강" variant="default" />
-          <SummaryTile label="남은 액션" value={summary.actionCount} help={summary.actionHelp} variant={summary.actionVariant} />
+          <SummaryTile icon={<CheckCircle2 className="h-4 w-4" />} label="완료" value={summary.readyCount} help={`${summary.totalCount}개 섹션 중`} />
+          <SummaryTile icon={<AlertTriangle className="h-4 w-4" />} label="충돌" value={summary.conflictCount} help="먼저 해결" variant="danger" />
+          <SummaryTile icon={<ShieldCheck className="h-4 w-4" />} label="검토 필요" value={summary.reviewCount} help="근거 확인" variant="warning" />
+          <SummaryTile icon={<FileWarning className="h-4 w-4" />} label="입력 부족" value={summary.inputCount} help="초안 보강" variant="default" />
+          <SummaryTile icon={<ClipboardList className="h-4 w-4" />} label="남은 조치" value={summary.actionCount} help={summary.actionHelp} variant={summary.actionVariant} />
         </section>
 
-        <section className="mt-6 border-y border-gray-100 py-5">
+        <section className="mt-6 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div>
-              <h3 className="text-base text-gray-900">Export Readiness</h3>
-              <p className="mt-1 max-w-3xl text-sm leading-relaxed text-gray-600">
+              <h3 className="text-base font-semibold text-slate-950">공유 전 점검</h3>
+              <p className="mt-1 max-w-3xl text-sm leading-7 text-slate-600">
                 {summary.readinessDetail}
               </p>
             </div>
@@ -72,15 +83,15 @@ export function OpenQuestionsPage({ documentSections, onSelectSection }: OpenQue
 
         <section className="mt-8">
           <div className="mb-3 flex items-center justify-between gap-3">
-            <h3 className="text-base text-gray-900">Queue Items</h3>
-            <span className="text-xs text-gray-400">우선순위 순</span>
+            <h3 className="text-base font-semibold text-slate-950">검토 항목</h3>
+            <span className="text-xs text-slate-400">우선순위 순</span>
           </div>
 
-          <div className="divide-y divide-gray-100 border-y border-gray-100">
+          <div className="space-y-3">
             {queueItems.map((item) => (
               <div
                 key={item.sectionNumber}
-                className={`grid gap-4 py-5 lg:grid-cols-[minmax(0,1fr)_180px] ${queueAccentClass(item.category)}`}
+                className={`rounded-lg border bg-white p-4 shadow-sm lg:grid lg:grid-cols-[minmax(0,1fr)_190px] lg:gap-4 ${queueAccentClass(item.category)}`}
               >
                 <div className="min-w-0">
                   <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -89,27 +100,27 @@ export function OpenQuestionsPage({ documentSections, onSelectSection }: OpenQue
                       {item.sectionNumber}. {item.section}
                     </h4>
                   </div>
-                  <div className="mb-2 text-sm text-gray-700">{item.topic}</div>
-                  <p className="text-sm leading-relaxed text-gray-600">{item.reason}</p>
-                  <div className="mt-3 flex flex-wrap gap-2 text-xs text-gray-500">
-                    <span>출처 {item.sourceCount}</span>
-                    <span>대안 {item.alternativeCount}</span>
-                    <span>충돌 {item.conflictCount}</span>
+                  <div className="mb-2 text-sm font-medium text-slate-700">{item.topic}</div>
+                  <p className="text-sm leading-7 text-slate-600">{item.reason}</p>
+                  <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-500">
+                    <span>출처 {item.sourceCount}개</span>
+                    <span>대안 {item.alternativeCount}개</span>
+                    <span>충돌 {item.conflictCount}개</span>
                   </div>
                 </div>
 
                 <div className="flex flex-col items-start gap-3 lg:items-end">
                   <div className="text-left text-xs leading-relaxed text-gray-500 lg:text-right">
-                    <span className="block text-gray-900">다음 액션</span>
+                    <span className="block font-medium text-slate-900">다음 조치</span>
                     {item.nextAction}
                   </div>
                   <button
                     type="button"
                     aria-label={`${item.sectionNumber}. ${item.section} 검토하기`}
-                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50 lg:w-auto"
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 lg:w-auto"
                     onClick={() => onSelectSection(item.sectionNumber)}
                   >
-                    검토하기
+                    섹션 보기
                   </button>
                 </div>
               </div>
@@ -123,39 +134,61 @@ export function OpenQuestionsPage({ documentSections, onSelectSection }: OpenQue
 
 function SummaryTile({
   help,
+  icon,
   label,
   value,
   variant = 'default',
 }: {
   help: string;
+  icon: ReactNode;
   label: string;
   value: number;
   variant?: BadgeVariant;
 }) {
   return (
-    <div className="rounded-md border border-gray-200 p-4">
+    <div className="lift-card rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
       <div className="mb-3 flex items-center justify-between gap-2">
-        <div className="text-xs text-gray-500">{label}</div>
+        <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
+          <span className="text-slate-400">{icon}</span>
+          {label}
+        </div>
         <StatusBadge variant={variant}>{help}</StatusBadge>
       </div>
-      <div className="text-2xl text-gray-900">{value}</div>
+      <div className="text-2xl font-semibold text-slate-950">{value}</div>
     </div>
   );
 }
 
-function createReviewQueueItem(section: DocumentSectionData): ReviewQueueItem {
+function createReviewQueueItem(
+  section: DocumentSectionData,
+  publicationReadiness: PublicationReadiness,
+): ReviewQueueItem {
   const trace = section.decisionTrace;
-  const category = sectionCategory(section.status);
+  const traces = section.decisionTraces?.length
+    ? section.decisionTraces
+    : trace
+      ? [trace]
+      : [];
+  const requiredBlockIds = new Set(publicationReadiness.requiredBlockIds);
+  const unresolvedBlockIds = new Set(publicationReadiness.unresolvedBlockIds);
+  const sectionRequiredIds = traces
+    .map((item) => item.decisionBlockId)
+    .filter((blockId) => requiredBlockIds.has(blockId));
+  const sectionUnresolvedIds = sectionRequiredIds.filter((blockId) => unresolvedBlockIds.has(blockId));
+  const reviewResolved = sectionRequiredIds.length > 0 && sectionUnresolvedIds.length === 0;
+  const category = reviewResolved ? 'ready' : sectionCategory(section.status);
 
   return {
     sectionNumber: section.number,
     section: section.title,
     topic: trace?.topic ?? '추가 작성 필요',
     category,
-    status: sectionStatusLabel(section.status),
-    statusVariant: sectionStatusVariant(section.status),
-    reason: sectionReason(section),
-    nextAction: sectionNextAction(section),
+    status: reviewResolved ? '검토 완료' : sectionStatusLabel(section.status),
+    statusVariant: reviewResolved ? 'success' : sectionStatusVariant(section.status),
+    reason: reviewResolved
+      ? '선택안과 충돌 의견을 확인하고 이 섹션의 결정을 승인했습니다.'
+      : sectionReason(section),
+    nextAction: reviewResolved ? '최종 문장 확인' : sectionNextAction(section),
     sourceCount: trace
       ? new Set([
         ...(trace.selectedSources ?? []).map((source) => source.sourceIdeaId ?? source.sourceDraftId),
@@ -172,30 +205,24 @@ function createReviewQueueItem(section: DocumentSectionData): ReviewQueueItem {
   };
 }
 
-function createReviewSummary(items: ReviewQueueItem[]) {
+function createReviewSummary(items: ReviewQueueItem[], publicationReadiness: PublicationReadiness) {
   const totalCount = items.length;
   const conflictCount = items.filter((item) => item.category === 'conflict').length;
   const reviewCount = items.filter((item) => item.category === 'review').length;
   const inputCount = items.filter((item) => item.category === 'input').length;
   const readyCount = items.filter((item) => item.category === 'ready').length;
-  const actionCount = conflictCount + reviewCount + inputCount;
-  const readinessVariant: BadgeVariant = conflictCount ? 'danger' : actionCount ? 'warning' : 'success';
-  const readinessLabel = conflictCount
-    ? 'Export Blocked'
-    : actionCount
-      ? 'Export Caution'
-      : 'Ready';
-  const readinessDetail = conflictCount
-    ? `${conflictCount}개 충돌 섹션이 남아 있어 내보내기 전에 사람이 최종 선택해야 합니다.`
-    : inputCount
-      ? `${inputCount}개 입력 부족 섹션이 있습니다. 추가 초안을 넣거나 해당 섹션을 의도적으로 비워둘지 결정해야 합니다.`
-      : reviewCount
-        ? `${reviewCount}개 선택안의 근거만 확인하면 내보내기 가능한 상태입니다.`
-        : '충돌, 검토 필요, 입력 부족 섹션이 없어 내보내기 가능한 상태입니다.';
+  const sectionActionCount = conflictCount + reviewCount + inputCount;
+  const qualityActionCount = publicationReadiness.level === 'review' && sectionActionCount === 0 ? 1 : 0;
+  const actionCount = sectionActionCount + qualityActionCount;
+  const readinessVariant: BadgeVariant = publicationReadiness.level === 'ready'
+    ? 'success'
+    : publicationReadiness.level === 'blocked' || conflictCount
+      ? 'danger'
+      : 'warning';
 
   return {
     actionCount,
-    actionHelp: actionCount ? '처리 필요' : '준비됨',
+    actionHelp: qualityActionCount ? '품질 확인' : actionCount ? '처리 필요' : '정리됨',
     actionVariant: actionCount ? 'warning' as const : 'success' as const,
     checks: [
       {
@@ -207,14 +234,18 @@ function createReviewSummary(items: ReviewQueueItem[]) {
         variant: inputCount ? 'warning' as const : 'success' as const,
       },
       {
-        label: reviewCount ? `승인 후보 ${reviewCount}개` : '검토 대기 없음',
-        variant: reviewCount ? 'warning' as const : 'success' as const,
+        label: qualityActionCount
+          ? '문서 품질 보완'
+          : reviewCount
+            ? `승인 후보 ${reviewCount}개`
+            : '검토 대기 없음',
+        variant: qualityActionCount || reviewCount ? 'warning' as const : 'success' as const,
       },
     ],
     conflictCount,
     inputCount,
-    readinessDetail,
-    readinessLabel,
+    readinessDetail: publicationReadiness.detail,
+    readinessLabel: publicationReadiness.label,
     readinessVariant,
     readyCount,
     reviewCount,
@@ -237,8 +268,8 @@ function queuePriority(category: QueueCategory) {
 }
 
 function sectionStatusLabel(status: SectionStatus) {
-  if (status === 'conflict') return '충돌 검토';
-  if (status === 'review') return '승인 후보';
+  if (status === 'conflict') return '충돌 있음';
+  if (status === 'review') return '근거 확인';
   if (status === 'pending') return '입력 부족';
   return '완료';
 }
@@ -264,16 +295,16 @@ function sectionReason(section: DocumentSectionData) {
   if (section.status === 'review') {
     return trace
       ? 'AI가 선택안을 만들었지만 사람 검토가 필요합니다. 선택 근거와 원문 출처를 확인한 뒤 승인해야 합니다.'
-      : '검토 상태이지만 연결된 Decision Block이 부족합니다. 분석 결과를 다시 확인해야 합니다.';
+      : '검토 상태이지만 연결된 결정 근거가 부족합니다. 분석 결과를 다시 확인해야 합니다.';
   }
 
   if (section.status === 'pending') {
     if (section.content.trim() && !trace) {
-      return '최종 문서 문장은 있지만 관련 Decision Block이 없어 선택 근거 추적성이 낮습니다.';
+      return '최종 문서 문장은 있지만 관련 결정 근거가 없어 선택 추적성이 낮습니다.';
     }
 
     if (!section.content.trim() && trace) {
-      return 'Decision Block은 있으나 최종 문서 섹션이 비어 있습니다. 선택안을 문서 문장으로 반영해야 합니다.';
+      return '결정 근거는 있으나 최종 문서 섹션이 비어 있습니다. 선택안을 문서 문장으로 반영해야 합니다.';
     }
 
     return '초안에서 이 섹션으로 매핑된 아이디어가 부족해 최종 문서 내용과 선택 근거가 비어 있습니다.';
@@ -283,15 +314,15 @@ function sectionReason(section: DocumentSectionData) {
 }
 
 function sectionNextAction(section: DocumentSectionData) {
-  if (section.status === 'conflict') return '충돌 의견 비교 후 선택안 확정';
-  if (section.status === 'review') return '근거와 출처 확인 후 승인';
-  if (section.status === 'pending') return '초안 추가 또는 섹션 수동 보강';
+  if (section.status === 'conflict') return '충돌 의견을 비교하고 선택안을 확정하세요.';
+  if (section.status === 'review') return '출처와 선택 근거를 확인하세요.';
+  if (section.status === 'pending') return '초안을 추가하거나 섹션을 보강하세요.';
   return '최종 문장 확인';
 }
 
 function queueAccentClass(category: QueueCategory) {
-  if (category === 'conflict') return 'border-l-2 border-l-red-300 pl-4';
-  if (category === 'review') return 'border-l-2 border-l-amber-300 pl-4';
-  if (category === 'input') return 'border-l-2 border-l-gray-200 pl-4';
-  return 'border-l-2 border-l-emerald-200 pl-4';
+  if (category === 'conflict') return 'border-red-200';
+  if (category === 'review') return 'border-amber-200';
+  if (category === 'input') return 'border-slate-200';
+  return 'border-emerald-200';
 }

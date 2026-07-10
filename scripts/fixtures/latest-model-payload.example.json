@@ -1,0 +1,44 @@
+{
+  "id": "latest-model-payload-example",
+  "title": "Example payload shaped like latest-model draft generation output",
+  "project": {
+    "title": "PlanMerge multi-company AI draft merge",
+    "goal": "Evaluate whether PlanMerge can merge planning drafts written by different people using different AI companies while preserving selected ideas, rejected alternatives, conflicts, and source traceability.",
+    "documentType": "service_plan",
+    "contextPack": "Prioritize source traceability, conflict preservation, reviewer trust, paste-based MVP validation, and clear section-level decision blocks.",
+    "forbiddenDirection": "The first MVP excludes Slack import, Notion export, Google Docs export, billing, team invitations, and realtime co-editing.",
+    "outputStyle": "Portfolio-ready product planning memo with explicit decision trace and concise reviewer actions."
+  },
+  "drafts": [
+    {
+      "id": "openai-frontier-example",
+      "authorName": "PM using OpenAI",
+      "authorRole": "PM",
+      "aiModel": "ChatGPT",
+      "taskTitle": "OpenAI planning draft",
+      "rawText": "The MVP should remain paste-based and focus on project criteria, draft intake, AI merge, decision review, source traceability, and markdown export. Slack, Notion, billing, and realtime collaboration should wait until the core decision trace is validated.",
+      "status": "submitted",
+      "createdAtLabel": "frontier-model"
+    },
+    {
+      "id": "anthropic-frontier-example",
+      "authorName": "Designer using Claude",
+      "authorRole": "Designer",
+      "aiModel": "Claude",
+      "taskTitle": "Claude planning draft",
+      "rawText": "The product should make trust visible. Users need source excerpts beside each decision, conflict badges, a review queue, and clear uncertainty labels. The first release should avoid integrations and show why each idea was selected or rejected.",
+      "status": "submitted",
+      "createdAtLabel": "frontier-model"
+    },
+    {
+      "id": "gemini-frontier-example",
+      "authorName": "Growth lead using Gemini",
+      "authorRole": "Marketer",
+      "aiModel": "Gemini",
+      "taskTitle": "Gemini planning draft",
+      "rawText": "The demo becomes easier to sell if the product exports to Notion and imports from Slack. These integrations could improve adoption, but they may increase MVP complexity. Success should measure shared workspaces, demo conversion, and source coverage.",
+      "status": "submitted",
+      "createdAtLabel": "frontier-model"
+    }
+  ]
+}

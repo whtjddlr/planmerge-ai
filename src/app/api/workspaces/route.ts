@@ -6,6 +6,7 @@ import { parseWorkspaceImport } from '@/planmerge/lib/localWorkspace';
 import { getDb, isDatabaseConfigured } from '@/server/db';
 import { checkRateLimit, getClientKey } from '@/server/rateLimit';
 import { hashManageToken } from '@/server/sharedWorkspace';
+import { getWorkspacePublicationReadiness } from '@/server/workspacePublication';
 
 const RATE_LIMIT = { limit: 5, windowMs: 60_000 };
 const MAX_SNAPSHOT_CHARS = 1_500_000;
@@ -52,6 +53,15 @@ export async function POST(request: Request) {
 
   if (!parsed.valid) {
     return NextResponse.json({ errors: parsed.errors }, { status: 400 });
+  }
+
+  const publicationReadiness = getWorkspacePublicationReadiness(parsed.state);
+
+  if (!publicationReadiness.canShare) {
+    return NextResponse.json(
+      { errors: [`공유 준비가 완료되지 않았습니다. ${publicationReadiness.detail}`] },
+      { status: 409 },
+    );
   }
 
   try {

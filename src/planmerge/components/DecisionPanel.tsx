@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { CheckCircle2, GitCompare, Maximize2, MessageSquare, Minimize2, ShieldAlert } from 'lucide-react';
 import { StatusBadge } from './StatusBadge';
 import { getDecisionTrace } from '../data/mergeResult';
 import type { AnonymousOpinion, DecisionOpinion, DecisionTrace, DocumentSectionData } from '../data/mergeResult';
@@ -41,7 +42,10 @@ type DecisionPanelProps = {
   sharedWorkspaceId?: string | null;
   sharedSnapshotVersion?: number | null;
   ownerShareAccess?: SharedWorkspaceOwnerAccess | null;
+  approvedBlockIds: string[];
+  reviewRequiredBlockIds: string[];
   onApplyDecisionOption?: (decisionBlockId: string, optionId: string) => void;
+  onApproveDecision?: (decisionBlockId: string) => void;
 };
 
 type SharedPendingAction = 'vote' | 'opinion';
@@ -510,6 +514,65 @@ function ApplyOptionButton({
   );
 }
 
+function DecisionComparison({
+  approved,
+  onApplyDecisionOption,
+  onApproveDecision,
+  trace,
+}: {
+  approved: boolean;
+  onApplyDecisionOption?: (decisionBlockId: string, optionId: string) => void;
+  onApproveDecision?: (decisionBlockId: string) => void;
+  trace: DecisionTrace;
+}) {
+  const comparison = trace.conflicts[0] ?? trace.alternatives[0];
+
+  if (!comparison) {
+    return null;
+  }
+
+  return (
+    <section className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+      <div className="mb-3">
+        <div className="text-xs font-semibold text-blue-700">변경 영향 미리보기</div>
+        <h3 className="mt-1 text-base font-semibold text-slate-950">현재 문장과 대체 문장을 비교합니다.</h3>
+      </div>
+      <div className="grid gap-3 lg:grid-cols-2">
+        <div className="rounded-lg border border-blue-200 bg-white p-4">
+          <div className="mb-2 text-xs font-semibold text-blue-700">현재 선택안</div>
+          <p className="text-sm leading-7 text-slate-800">{trace.selectedContent}</p>
+          {onApproveDecision && (
+            <button
+              type="button"
+              className="mt-4 w-full rounded-md bg-slate-950 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:bg-emerald-600"
+              disabled={approved}
+              onClick={() => onApproveDecision(trace.decisionBlockId)}
+            >
+              {approved ? '승인 완료' : '현재 선택안 유지하고 승인'}
+            </button>
+          )}
+        </div>
+        <div className="rounded-lg border border-amber-200 bg-white p-4">
+          <div className="mb-2 text-xs font-semibold text-amber-700">
+            {trace.conflicts.length ? '충돌안 적용 시' : '대안 적용 시'}
+          </div>
+          <p className="text-sm leading-7 text-slate-800">{comparison.title}</p>
+          <p className="mt-2 text-xs leading-6 text-slate-500">{comparison.description}</p>
+          {comparison.optionId && onApplyDecisionOption && (
+            <button
+              type="button"
+              className="mt-4 w-full rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900 transition-colors hover:bg-amber-100"
+              onClick={() => onApplyDecisionOption(trace.decisionBlockId, comparison.optionId!)}
+            >
+              이 문장으로 변경하고 승인
+            </button>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function DecisionPanel({
   selectedSection,
   analysisRunId,
@@ -517,12 +580,16 @@ export function DecisionPanel({
   sharedWorkspaceId,
   sharedSnapshotVersion,
   ownerShareAccess,
+  approvedBlockIds,
+  reviewRequiredBlockIds,
   onApplyDecisionOption,
+  onApproveDecision,
 }: DecisionPanelProps) {
   const traces = selectedSection.decisionTraces?.length
     ? selectedSection.decisionTraces
     : [getDecisionTrace(selectedSection)];
   const [activeBlockIdBySection, setActiveBlockIdBySection] = useState<Record<number, string>>({});
+  const [focusMode, setFocusMode] = useState(false);
   const trace = traces.find(
     (candidate) => candidate.decisionBlockId === activeBlockIdBySection[selectedSection.number],
   ) ?? traces[0];
@@ -591,6 +658,8 @@ export function DecisionPanel({
   const ownerFeedbackErrorMessage = currentOwnerFeedbackState?.status === 'error'
     ? currentOwnerFeedbackState.message
     : undefined;
+  const approved = approvedBlockIds.includes(trace.decisionBlockId);
+  const reviewRequired = reviewRequiredBlockIds.includes(trace.decisionBlockId);
 
   useEffect(() => {
     // 공유 모드에서는 서버가 단일 소스이므로 로컬 참여 상태를 건드리지 않는다.
@@ -604,6 +673,24 @@ export function DecisionPanel({
   useEffect(() => {
     saveOpinionClusterState(clusterResults, clusterStorageScope);
   }, [clusterResults, clusterStorageScope]);
+
+  useEffect(() => {
+    if (!focusMode) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setFocusMode(false);
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [focusMode]);
 
   useEffect(() => {
     if (!sharedWorkspaceId || !sharedSnapshotVersion) {
@@ -857,13 +944,44 @@ export function DecisionPanel({
   };
 
   return (
-    <div
-      data-testid="decision-panel"
-      className="w-full flex-shrink-0 border-t border-gray-200 bg-white xl:h-full xl:min-h-0 xl:w-96 xl:overflow-y-auto xl:border-l xl:border-t-0"
-    >
-      <div className="p-6 border-b border-gray-100 sticky top-0 bg-white">
-        <h2 className="text-base text-gray-900">선택 과정</h2>
-        <div className="mt-1 text-xs text-gray-500">
+    <>
+      {focusMode && (
+        <button
+          type="button"
+          aria-label="배경을 눌러 집중 비교 닫기"
+          className="fixed inset-0 z-[60] cursor-default bg-slate-950/45 backdrop-blur-sm"
+          onClick={() => setFocusMode(false)}
+        />
+      )}
+      <div
+        data-testid="decision-panel"
+        data-focus-mode={focusMode ? 'true' : 'false'}
+        role={focusMode ? 'dialog' : undefined}
+        aria-modal={focusMode ? true : undefined}
+        aria-label={focusMode ? '결정 집중 비교' : undefined}
+        className={focusMode
+          ? 'fixed inset-3 z-[70] overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-2xl sm:inset-6'
+          : 'w-full flex-shrink-0 border-t border-slate-200 bg-white xl:h-full xl:min-h-0 xl:w-96 xl:overflow-y-auto xl:border-l xl:border-t-0'}
+      >
+      <div className="sticky top-0 z-10 border-b border-slate-100 bg-white/96 p-6 backdrop-blur-xl">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-xs font-semibold text-blue-700">
+            <GitCompare className="h-4 w-4" />
+            결정 근거
+          </div>
+          <button
+            type="button"
+            data-testid="decision-focus-toggle"
+            className="focus-ring grid h-9 w-9 place-items-center rounded-md border border-slate-200 text-slate-600 transition-colors hover:bg-slate-50"
+            aria-label={focusMode ? '집중 비교 닫기' : '집중 비교 열기'}
+            title={focusMode ? '집중 비교 닫기' : '집중 비교 열기'}
+            onClick={() => setFocusMode((current) => !current)}
+          >
+            {focusMode ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+          </button>
+        </div>
+        <h2 className="text-base font-semibold text-slate-950">선택 과정</h2>
+        <div className="mt-1 text-xs text-slate-500">
           현재 선택: {trace.sectionNumber}. {trace.sectionTitle}
         </div>
         {traces.length > 1 && (
@@ -876,7 +994,7 @@ export function DecisionPanel({
                 className={`rounded-md border px-2.5 py-1 text-xs transition-colors ${
                   candidate.decisionBlockId === trace.decisionBlockId
                     ? 'border-blue-300 bg-blue-50 text-blue-800'
-                    : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                    : 'border-slate-200 text-slate-600 hover:bg-slate-50'
                 }`}
                 onClick={() => setActiveBlockIdBySection((current) => ({
                   ...current,
@@ -890,12 +1008,20 @@ export function DecisionPanel({
         )}
       </div>
 
-      <div className="p-6 space-y-6">
-        <div className="pb-6 border-b border-gray-100">
-          <div className="text-xs text-gray-500 mb-1">섹션</div>
-          <div className="text-sm text-gray-900 mb-4">{trace.sectionTitle}</div>
-          <div className="text-xs text-gray-500 mb-1">토픽</div>
-          <div className="text-sm text-gray-900 mb-3">{trace.topic}</div>
+      <div className={`space-y-5 p-6 ${focusMode ? 'mx-auto max-w-6xl' : ''}`}>
+        {focusMode && (
+          <DecisionComparison
+            approved={approved}
+            onApplyDecisionOption={onApplyDecisionOption}
+            onApproveDecision={onApproveDecision}
+            trace={trace}
+          />
+        )}
+        <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-4">
+          <div className="text-xs text-slate-500 mb-1">섹션</div>
+          <div className="text-sm font-semibold text-slate-950 mb-4">{trace.sectionTitle}</div>
+          <div className="text-xs text-slate-500 mb-1">검토 주제</div>
+          <div className="text-sm font-medium text-slate-900 mb-3">{trace.topic}</div>
           <div className="flex gap-2">
             {trace.badges.map((badge) => (
               <StatusBadge key={badge.label} variant={badge.variant}>
@@ -905,16 +1031,40 @@ export function DecisionPanel({
           </div>
         </div>
 
-        <div className="pb-6 border-b border-gray-100">
-          <div className="text-xs text-gray-500 mb-2">선택 내용</div>
-          <p className="text-sm text-gray-900 leading-relaxed mb-3">
+        <div className="rounded-lg border border-blue-100 bg-blue-50/50 p-4">
+          <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-blue-700">
+            <CheckCircle2 className="h-4 w-4" />
+            현재 선택안
+          </div>
+          <p className="text-sm text-slate-950 leading-7 mb-3">
             {trace.selectedContent}
           </p>
-          <div className="text-xs text-gray-500 mb-1">선택 근거</div>
-          <p className="text-xs text-gray-600 leading-relaxed">
+          <div className="text-xs text-blue-700 mb-1">선택 근거</div>
+          <p className="text-xs text-slate-600 leading-6">
             {trace.selectionReason}
           </p>
           <SelectedSources trace={trace} />
+          {(reviewRequired || approved) && (
+            <div className="mt-4 border-t border-blue-100 pt-4">
+              {approved ? (
+                <div className="inline-flex items-center gap-2 text-sm font-semibold text-emerald-700">
+                  <CheckCircle2 className="h-4 w-4" />
+                  이 결정은 승인되었습니다.
+                </div>
+              ) : onApproveDecision ? (
+                <button
+                  type="button"
+                  data-testid="approve-decision-button"
+                  className="w-full rounded-md bg-slate-950 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-800"
+                  onClick={() => onApproveDecision(trace.decisionBlockId)}
+                >
+                  현재 선택안 유지하고 승인
+                </button>
+              ) : (
+                <StatusBadge variant="warning">검토 대기</StatusBadge>
+              )}
+            </div>
+          )}
         </div>
 
         <AnonymousVotePanel
@@ -940,7 +1090,7 @@ export function DecisionPanel({
               trace={trace}
             />
           ) : (
-            <div className="pb-6 border-b border-gray-100">
+            <div className="pb-6 border-b border-slate-100">
               <div className="mb-2 text-xs text-gray-500">공유 링크 피드백</div>
               <div className="rounded-md border border-amber-100 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
                 공유 이후 분석이 변경되어 집계를 표시하지 않습니다. 공유를 갱신하세요.
@@ -956,17 +1106,20 @@ export function DecisionPanel({
           onGenerate={handleClusterGenerate}
         />
 
-        <div className="pb-6 border-b border-gray-100">
-          <div className="text-xs text-gray-500 mb-3">다른 의견</div>
+        <div className="pb-6 border-b border-slate-100">
+          <div className="mb-3 flex items-center gap-2 text-xs font-semibold text-slate-500">
+            <MessageSquare className="h-4 w-4" />
+            대안 의견
+          </div>
           {trace.alternatives.length > 0 ? (
             <div className="space-y-3">
               {trace.alternatives.map((alternative, index) => (
                 <div
                   key={alternative.optionId ?? `${alternative.title}-${index}`}
-                  className="pb-3 border-b border-gray-100 last:border-0 last:pb-0"
+                  className="pb-3 border-b border-slate-100 last:border-0 last:pb-0"
                 >
-                  <div className="text-sm text-gray-900 mb-1">{alternative.title}</div>
-                  <div className="text-xs text-gray-600 mb-2">{alternative.description}</div>
+                  <div className="text-sm font-semibold text-slate-950 mb-1">{alternative.title}</div>
+                  <div className="text-xs text-slate-600 mb-2">{alternative.description}</div>
                   <SourceChips opinion={alternative} />
                   <ApplyOptionButton
                     optionId={alternative.optionId}
@@ -982,23 +1135,26 @@ export function DecisionPanel({
         </div>
 
         <div>
-          <div className="text-xs text-gray-500 mb-3">충돌 의견</div>
+          <div className="mb-3 flex items-center gap-2 text-xs font-semibold text-amber-700">
+            <ShieldAlert className="h-4 w-4" />
+            충돌 의견
+          </div>
           {trace.conflicts.length > 0 ? (
             <div className="space-y-3">
               {trace.conflicts.map((conflict, index) => (
                 <div
                   key={conflict.optionId ?? `${conflict.title}-${index}`}
-                  className="pb-3 border-b border-gray-100 last:border-0 last:pb-0"
+                  className="pb-3 border-b border-slate-100 last:border-0 last:pb-0"
                 >
                   <div className="flex items-start justify-between gap-3 mb-2">
-                    <div className="text-sm text-gray-900">{conflict.title}</div>
+                    <div className="text-sm font-semibold text-slate-950">{conflict.title}</div>
                     {conflict.severity && (
                       <StatusBadge variant="warning">
                         {conflict.severity === 'high' ? '높음' : conflict.severity === 'medium' ? '중간' : '낮음'}
                       </StatusBadge>
                     )}
                   </div>
-                  <div className="text-xs text-gray-600 mb-2">{conflict.description}</div>
+                  <div className="text-xs text-slate-600 mb-2">{conflict.description}</div>
                   <SourceChips opinion={conflict} />
                   <ApplyOptionButton
                     optionId={conflict.optionId}
@@ -1025,6 +1181,7 @@ export function DecisionPanel({
           onSubmit={handleOpinionSubmit}
         />
       </div>
-    </div>
+      </div>
+    </>
   );
 }

@@ -10,6 +10,7 @@ import {
   SHARED_WORKSPACE_UNAVAILABLE_ERROR,
 } from '@/server/sharedWorkspace';
 import { checkRateLimit, getClientKey } from '@/server/rateLimit';
+import { getWorkspacePublicationReadiness } from '@/server/workspacePublication';
 
 const RATE_LIMIT = { limit: 30, windowMs: 60_000 };
 const UPDATE_RATE_LIMIT = { limit: 5, windowMs: 60_000 };
@@ -144,6 +145,15 @@ export async function PUT(request: Request, context: RouteContext) {
       return NextResponse.json(
         { errors: ['공유 링크를 갱신할 권한이 없습니다.'] },
         { status: 401 },
+      );
+    }
+
+    const publicationReadiness = getWorkspacePublicationReadiness(parsed.state);
+
+    if (!publicationReadiness.canShare) {
+      return NextResponse.json(
+        { errors: [`공유 준비가 완료되지 않았습니다. ${publicationReadiness.detail}`] },
+        { status: 409 },
       );
     }
 

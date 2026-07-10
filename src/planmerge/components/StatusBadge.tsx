@@ -1,18 +1,20 @@
+import type { ReactNode } from 'react';
+
 interface StatusBadgeProps {
-  children: React.ReactNode;
+  children: ReactNode;
   variant?: 'default' | 'success' | 'warning' | 'danger';
 }
 
 export function StatusBadge({ children, variant = 'default' }: StatusBadgeProps) {
   const variants = {
-    default: 'bg-gray-100 text-gray-700',
-    success: 'bg-emerald-50 text-emerald-700',
-    warning: 'bg-amber-50 text-amber-700',
-    danger: 'bg-red-50 text-red-700',
+    default: 'border-slate-200 bg-slate-100 text-slate-700',
+    success: 'border-emerald-100 bg-emerald-50 text-emerald-700',
+    warning: 'border-amber-100 bg-amber-50 text-amber-700',
+    danger: 'border-red-100 bg-red-50 text-red-700',
   };
 
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs ${variants[variant]}`}>
+    <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium ${variants[variant]}`}>
       {children}
     </span>
   );

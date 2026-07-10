@@ -4,6 +4,7 @@ import {
   runLocalPlanMergeHarness,
   validatePlanMergeAnalysis,
   type PlanMergeAnalysisPayload,
+  type PlanMergeAnalysisResult,
 } from '../src/planmerge/lib/ai/planmergeProtocol';
 import {
   sampleDrafts,
@@ -466,7 +467,66 @@ function runCase(testCase: QualityCase): CaseSummary {
   };
 }
 
-const summaries = cases.map(runCase);
+function runValidationRegressionCases(): CaseSummary[] {
+  const conflictPayload = payload([
+    draft('regression-safe', 'MVP는 붙여넣기 기반 초안 병합과 Markdown 내보내기만 포함한다.', {
+      taskTitle: 'MVP 범위',
+      aiModel: 'ChatGPT',
+    }),
+    draft('regression-conflict', 'MVP 첫 버전에 Notion export와 Slack import를 포함해야 한다.', {
+      taskTitle: 'MVP 범위',
+      aiModel: 'Gemini',
+    }),
+  ], {
+    forbiddenDirection: '첫 MVP에서는 Notion export와 Slack import를 제외한다.',
+  });
+  const parsed = parsePlanMergeAnalysisPayload(conflictPayload);
+
+  if (!parsed.valid) {
+    return [{
+      id: 'validation-conflict-metadata-consistency',
+      status: 'FAIL',
+      title: 'conflictLevel과 conflict option은 일관되어야 한다.',
+      details: `fixture parse failed: ${parsed.errors.join('; ')}`,
+    }];
+  }
+
+  const validResult = runLocalPlanMergeHarness(parsed.payload);
+  const inconsistentResult: PlanMergeAnalysisResult = {
+    ...validResult,
+    decisionBlocks: validResult.decisionBlocks.map((block, index) =>
+      index === 0
+        ? {
+          ...block,
+          conflictLevel: 'medium',
+          needsHumanReview: false,
+          options: block.options.filter((option) => option.optionType === 'selected'),
+        }
+        : block,
+    ),
+  };
+  const validation = validatePlanMergeAnalysis(parsed.payload, inconsistentResult);
+  const expectedFragments = [
+    'conflictLevel must be none when there are no conflict options',
+  ];
+  const hasExpectedErrors = expectedFragments.every((fragment) =>
+    validation.errors.some((error) => error.includes(fragment)),
+  );
+
+  return [{
+    id: 'validation-conflict-metadata-consistency',
+    status: !validation.valid && hasExpectedErrors ? 'PASS' : 'FAIL',
+    title: 'conflictLevel과 conflict option은 일관되어야 한다.',
+    details: validation.valid
+      ? 'unexpected valid inconsistent result'
+      : `validation errors=${validation.errors.join('; ')}`,
+  }];
+}
+
+const summaries = [
+  ...cases.map(runCase),
+  ...runValidationRegressionCases(),
+];
 
 summaries.forEach((summary) => {
   console.log(`${summary.status} ${summary.id} - ${summary.title}`);
