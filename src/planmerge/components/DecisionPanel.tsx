@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ConsensusPatchPanel } from './ConsensusPatchPanel';
 import { StatusBadge } from './StatusBadge';
 import { getDecisionTrace } from '../data/mergeResult';
 import type { AnonymousOpinion, DecisionOpinion, DecisionTrace, DocumentSectionData } from '../data/mergeResult';
@@ -23,6 +24,13 @@ import {
 } from '../lib/ai/opinionClustering';
 import type { OpinionClusteringResult, OpinionClusterStateScope } from '../lib/ai/opinionClustering';
 import {
+  createDecisionResolutionPayload,
+  requestDecisionResolution,
+} from '../lib/ai/decisionResolution';
+import type { DecisionResolutionResult } from '../lib/ai/decisionResolution';
+import type { PlanMergeAnalysisResult } from '../lib/ai/planmergeProtocol';
+import type { LocalDraftSubmission, ProjectSettings } from '../lib/localWorkspace';
+import {
   fetchBlockParticipation,
   SHARED_LINK_UNAVAILABLE_MESSAGE,
   SHARED_PARTICIPATION_FAILED_MESSAGE,
@@ -41,7 +49,11 @@ type DecisionPanelProps = {
   sharedWorkspaceId?: string | null;
   sharedSnapshotVersion?: number | null;
   ownerShareAccess?: SharedWorkspaceOwnerAccess | null;
+  projectSettings?: ProjectSettings;
+  analysisResult?: PlanMergeAnalysisResult;
+  drafts?: LocalDraftSubmission[];
   onApplyDecisionOption?: (decisionBlockId: string, optionId: string) => void;
+  onApplyDecisionResolution?: (result: DecisionResolutionResult) => void;
 };
 
 type SharedPendingAction = 'vote' | 'opinion';
@@ -59,6 +71,11 @@ type OwnerSharedFeedbackState = {
   message?: string;
 };
 
+type DecisionResolutionRequestState =
+  | { status: 'loading' }
+  | { status: 'complete'; result: DecisionResolutionResult }
+  | { status: 'error'; message: string };
+
 function toSharedDecisionVote(
   participation: SharedParticipation | null,
   voterKey: string,
@@ -71,6 +88,40 @@ function toSharedDecisionVote(
     voterKey,
     selectedOptionId: participation.myOptionId,
     overrides: participation.votes,
+  };
+}
+
+function mergeResolutionOpinions(
+  localOpinions: AnonymousOpinion[],
+  sharedOpinions: AnonymousOpinion[] = [],
+) {
+  const opinionsById = new Map(localOpinions.map((opinion) => [opinion.id, opinion]));
+
+  sharedOpinions.forEach((opinion) => {
+    opinionsById.set(opinion.id, opinion);
+  });
+
+  return [...opinionsById.values()];
+}
+
+function mergeResolutionVote(
+  localVote: DecisionVote | undefined,
+  sharedParticipation: SharedParticipation | null,
+): DecisionVote | undefined {
+  if (!localVote && !sharedParticipation) {
+    return undefined;
+  }
+
+  const overrides = { ...(localVote?.overrides ?? {}) };
+
+  Object.entries(sharedParticipation?.votes ?? {}).forEach(([optionId, count]) => {
+    overrides[optionId] = (overrides[optionId] ?? 0) + count;
+  });
+
+  return {
+    voterKey: localVote?.voterKey ?? 'owner-feedback-aggregate',
+    selectedOptionId: localVote?.selectedOptionId ?? sharedParticipation?.myOptionId,
+    overrides,
   };
 }
 
@@ -485,6 +536,14 @@ function getSharedParticipationErrorMessage(error: unknown) {
   return SHARED_PARTICIPATION_FAILED_MESSAGE;
 }
 
+function getDecisionResolutionErrorMessage(error: unknown) {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+
+  return 'GPT-5.6 합의안을 만들지 못했습니다. 잠시 후 다시 시도해 주세요.';
+}
+
 function ApplyOptionButton({
   optionId,
   decisionBlockId,
@@ -517,7 +576,11 @@ export function DecisionPanel({
   sharedWorkspaceId,
   sharedSnapshotVersion,
   ownerShareAccess,
+  projectSettings,
+  analysisResult,
+  drafts,
   onApplyDecisionOption,
+  onApplyDecisionResolution,
 }: DecisionPanelProps) {
   const traces = selectedSection.decisionTraces?.length
     ? selectedSection.decisionTraces
@@ -569,6 +632,8 @@ export function DecisionPanel({
     loadOpinionClusterState(analysisRunId, clusterStorageScope));
   const [clusterLoadingByBlock, setClusterLoadingByBlock] = useState<Record<string, boolean>>({});
   const [draftOpinions, setDraftOpinions] = useState<Record<string, string>>({});
+  const [decisionResolutionStates, setDecisionResolutionStates] =
+    useState<Record<string, DecisionResolutionRequestState>>({});
 
   const decisionVote = sharedWorkspaceId
     ? toSharedDecisionVote(sharedParticipation, anonymousClientId)
@@ -591,6 +656,30 @@ export function DecisionPanel({
   const ownerFeedbackErrorMessage = currentOwnerFeedbackState?.status === 'error'
     ? currentOwnerFeedbackState.message
     : undefined;
+  const resolutionOpinions = mergeResolutionOpinions(
+    decisionOpinions,
+    ownerFeedbackParticipation?.opinions,
+  );
+  const resolutionVote = mergeResolutionVote(decisionVote, ownerFeedbackParticipation);
+  const decisionResolutionStateKey = `${analysisRunId}:${trace.decisionBlockId}`;
+  const decisionResolutionState = decisionResolutionStates[decisionResolutionStateKey];
+  const protocolDecisionBlock = analysisResult?.decisionBlocks.find(
+    (block) => block.id === trace.decisionBlockId,
+  );
+  const decisionNeedsResolution = Boolean(
+    trace.conflicts.length > 0 ||
+    protocolDecisionBlock?.needsHumanReview ||
+    (protocolDecisionBlock && protocolDecisionBlock.conflictLevel !== 'none'),
+  );
+  const decisionRoomAvailable = Boolean(
+    !sharedWorkspaceId &&
+    !ownerFeedbackLoading &&
+    projectSettings &&
+    analysisResult &&
+    drafts &&
+    onApplyDecisionResolution &&
+    decisionNeedsResolution,
+  );
 
   useEffect(() => {
     // 공유 모드에서는 서버가 단일 소스이므로 로컬 참여 상태를 건드리지 않는다.
@@ -856,6 +945,71 @@ export function DecisionPanel({
     }));
   };
 
+  const handleDecisionResolutionRequest = async () => {
+    if (
+      sharedWorkspaceId ||
+      !projectSettings ||
+      !analysisResult ||
+      !drafts ||
+      !onApplyDecisionResolution ||
+      decisionResolutionState?.status === 'loading'
+    ) {
+      return;
+    }
+
+    const requestStateKey = decisionResolutionStateKey;
+    const payload = createDecisionResolutionPayload({
+      project: projectSettings,
+      analysisResult,
+      drafts,
+      decisionBlockId: trace.decisionBlockId,
+      opinions: resolutionOpinions,
+      vote: resolutionVote,
+    });
+
+    setDecisionResolutionStates((current) => ({
+      ...current,
+      [requestStateKey]: { status: 'loading' },
+    }));
+
+    try {
+      const result = await requestDecisionResolution(payload);
+
+      setDecisionResolutionStates((current) => ({
+        ...current,
+        [requestStateKey]: { status: 'complete', result },
+      }));
+    } catch (error) {
+      setDecisionResolutionStates((current) => ({
+        ...current,
+        [requestStateKey]: {
+          status: 'error',
+          message: getDecisionResolutionErrorMessage(error),
+        },
+      }));
+    }
+  };
+
+  const handleDecisionResolutionApply = () => {
+    if (
+      decisionResolutionState?.status !== 'complete' ||
+      decisionResolutionState.result.proposal.status !== 'ready' ||
+      !decisionResolutionState.result.applicable ||
+      !onApplyDecisionResolution
+    ) {
+      return;
+    }
+
+    const result = decisionResolutionState.result;
+
+    setDecisionResolutionStates((current) => {
+      const next = { ...current };
+      delete next[decisionResolutionStateKey];
+      return next;
+    });
+    onApplyDecisionResolution(result);
+  };
+
   return (
     <div
       data-testid="decision-panel"
@@ -955,6 +1109,24 @@ export function DecisionPanel({
           opinionCount={decisionOpinions.length}
           onGenerate={handleClusterGenerate}
         />
+
+        {decisionRoomAvailable && (
+          <ConsensusPatchPanel
+            beforeContent={selectedSection.content || trace.selectedContent}
+            error={decisionResolutionState?.status === 'error'
+              ? decisionResolutionState.message
+              : undefined}
+            loading={decisionResolutionState?.status === 'loading'}
+            resolution={decisionResolutionState?.status === 'complete'
+              ? decisionResolutionState.result
+              : undefined}
+            trace={trace}
+            onApply={handleDecisionResolutionApply}
+            onRequest={() => {
+              void handleDecisionResolutionRequest();
+            }}
+          />
+        )}
 
         <div className="pb-6 border-b border-gray-100">
           <div className="text-xs text-gray-500 mb-3">다른 의견</div>

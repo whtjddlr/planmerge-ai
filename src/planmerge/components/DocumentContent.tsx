@@ -132,21 +132,29 @@ function AnalysisQualityStrip({
   const sourceCoverage = metricById(qualityReport.metrics, 'source_coverage');
   const traceability = metricById(qualityReport.metrics, 'option_traceability');
   const primaryAction = qualityReport.nextActions[0];
+  const unresolvedDecisionCount = analysisResult.decisionBlocks.filter(
+    (block) => block.needsHumanReview || block.conflictLevel !== 'none',
+  ).length;
 
   return (
     <section className="sticky top-0 z-10 mb-6 rounded-md border border-gray-200 bg-white/95 px-4 py-4 shadow-sm backdrop-blur">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
           <div className="mb-2 flex flex-wrap items-center gap-2">
-            <span className="text-xs text-gray-500">Quality Gate</span>
+            <span className="text-xs text-gray-500">Evidence Quality</span>
             <StatusBadge variant={qualityBadgeVariant(qualityReport.level)}>
               {qualityLevelLabel(qualityReport.level)}
+            </StatusBadge>
+            <StatusBadge variant={unresolvedDecisionCount > 0 ? 'danger' : 'success'}>
+              {unresolvedDecisionCount > 0
+                ? `Decision Blocked · ${unresolvedDecisionCount}`
+                : 'Decision Ready'}
             </StatusBadge>
             <StatusBadge variant={analysisResult.source === 'local_harness' ? 'warning' : 'success'}>
               {analysisSourceLabel(analysisResult.source)}
             </StatusBadge>
           </div>
-          <div className="text-lg text-gray-900">{qualityReport.score}점</div>
+          <div className="text-lg text-gray-900">Evidence score {qualityReport.score}</div>
           <p className="mt-1 max-w-2xl text-sm leading-relaxed text-gray-600">{qualityReport.summary}</p>
           {primaryAction && (
             <p className="mt-2 text-xs leading-relaxed text-gray-500">

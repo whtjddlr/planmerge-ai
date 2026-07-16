@@ -934,6 +934,31 @@ export function conflictsWithForbiddenDirection(forbiddenDirection: string, idea
 
   const haystack = `${idea.topic} ${idea.normalizedText} ${idea.sourceExcerpt}`.toLowerCase();
   const forbidden = forbiddenDirection.toLowerCase();
+  const reversesDeferral = [
+    '포함하지 않으면 안',
+    '제외하면 안',
+    '미루면 안',
+    '검증 이후가 아니라',
+    '후속 단계가 아니라',
+  ].some((phrase) => haystack.includes(phrase));
+  const explicitlyDefersOrExcludes = !reversesDeferral && [
+    '포함하지 않',
+    '제외하',
+    '지원하지 않',
+    '연동하지 않',
+    '검증 이후',
+    '후속 단계',
+    '나중에 추가',
+    '범위 밖',
+  ].some((phrase) => haystack.includes(phrase));
+
+  // 금지 키워드를 언급하더라도 명시적으로 제외하거나 뒤로 미루는 제안은
+  // 금지 방향을 지키는 근거다. 단순 키워드 교집합만으로 이를 충돌로 처리하면
+  // 안전한 선택안조차 Decision Resolution에서 사용할 수 없게 된다.
+  if (explicitlyDefersOrExcludes) {
+    return false;
+  }
+
   const keywordGroups = [
     ['실시간 공동 편집', '공동 편집'],
     ['외부 문서 연동', '문서 연동', 'notion'],

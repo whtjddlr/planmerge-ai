@@ -216,14 +216,17 @@ function SummaryGrid({
   qualityScore: number;
   validationErrorCount: number;
 }) {
+  const unresolvedDecisionCount = analysisResult.decisionBlocks.filter(
+    (block) => block.needsHumanReview || block.conflictLevel !== 'none',
+  ).length;
   const items = [
-    { label: 'Quality Score', value: qualityScore },
+    { label: 'Evidence Score', value: qualityScore },
     { label: 'Normalized Ideas', value: analysisResult.normalizedIdeas.length },
     { label: 'Decision Blocks', value: analysisResult.decisionBlocks.length },
+    { label: 'Unresolved', value: unresolvedDecisionCount },
     { label: 'Final Sections', value: analysisResult.finalDocumentSections.length },
     { label: 'Missing Sections', value: analysisResult.missingSections.length },
     { label: 'Decision Logs', value: decisionLogCount },
-    { label: 'Warnings', value: analysisResult.warnings.length },
     { label: 'Validation Errors', value: validationErrorCount },
   ];
 
@@ -450,7 +453,9 @@ function DecisionLogsTab({ decisionLogs }: { decisionLogs: LocalDecisionLog[] })
                 run {log.analysisRunId} · {log.id} · {log.decisionBlockId} · {log.createdAtLabel}
               </div>
             </div>
-            <StatusBadge variant="warning">사용자 변경</StatusBadge>
+            <StatusBadge variant={log.action === 'ai_consensus_applied' ? 'success' : 'warning'}>
+              {log.action === 'ai_consensus_applied' ? 'GPT-5.6 consensus' : '사용자 변경'}
+            </StatusBadge>
           </div>
 
           <div className="grid gap-3 lg:grid-cols-2">
@@ -473,6 +478,22 @@ function DecisionLogsTab({ decisionLogs }: { decisionLogs: LocalDecisionLog[] })
           <div className="mt-3 rounded-md border border-gray-100 p-3">
             <div className="mb-1 text-xs text-gray-500">reason</div>
             <p className="text-xs leading-relaxed text-gray-600">{log.reason}</p>
+            {log.action === 'ai_consensus_applied' && (
+              <div
+                data-testid="decision-log-model-evidence"
+                className="mt-3 grid gap-1 border-t border-gray-100 pt-3 font-mono text-xs text-gray-500"
+              >
+                <span>model: {log.model ?? 'unknown'}</span>
+                <span>response: {log.responseId ?? 'not recorded'}</span>
+                {log.generatedAt && <span>generated: {log.generatedAt}</span>}
+                <span>
+                  supporting options: {log.supportingOptionIds?.join(', ') || 'none'}
+                </span>
+                <span>
+                  addressed opinions: {log.addressedOpinionIds?.join(', ') || 'none'}
+                </span>
+              </div>
+            )}
           </div>
         </div>
       ))}

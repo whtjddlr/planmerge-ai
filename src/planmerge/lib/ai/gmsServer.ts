@@ -9,11 +9,36 @@ type GmsResponseContent = {
 };
 
 type GmsResponsesApiResponse = {
+  id?: unknown;
+  model?: unknown;
   status?: unknown;
   incomplete_details?: unknown;
   output_text?: unknown;
   output?: unknown;
   choices?: unknown;
+};
+
+type GmsJsonCallOptions = {
+  maxOutputTokens: number;
+  model?: string;
+};
+
+export type ResponsesJsonCallOptions = GmsJsonCallOptions & {
+  apiKey: string;
+  apiUrl: string;
+  providerLabel?: string;
+  temperature?: number;
+  reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  jsonSchema?: {
+    name: string;
+    schema: object;
+  };
+};
+
+export type ResponsesJsonResult<T> = {
+  data: T;
+  responseId?: string;
+  model?: string;
 };
 
 const DEFAULT_GMS_API_URL = 'https://gms.ssafy.io/gmsapi/api.openai.com/v1/responses';
@@ -105,23 +130,38 @@ function extractOutputText(data: GmsResponsesApiResponse) {
 
 export async function callGmsJson<T>(
   prompt: string,
-  options: {
-    maxOutputTokens: number;
-    model?: string;
-  },
+  options: GmsJsonCallOptions,
 ): Promise<T> {
   const { apiKey, apiUrl, model } = getGmsConfig();
-  const selectedModel = options.model ?? model;
 
   if (!apiKey) {
     throw new Error('GMS_API_KEY is missing.');
   }
 
-  const response = await fetch(apiUrl, {
+  const result = await callResponsesJsonWithMetadata<T>(prompt, {
+    ...options,
+    apiKey,
+    apiUrl,
+    model: options.model ?? model,
+    providerLabel: 'GMS API',
+    temperature: 0.1,
+  });
+
+  return result.data;
+}
+
+export async function callResponsesJsonWithMetadata<T>(
+  prompt: string,
+  options: ResponsesJsonCallOptions,
+): Promise<ResponsesJsonResult<T>> {
+  const selectedModel = options.model ?? DEFAULT_GMS_MODEL;
+  const providerLabel = options.providerLabel?.trim() || 'Responses API';
+
+  const response = await fetch(options.apiUrl, {
     method: 'POST',
     signal: AbortSignal.timeout(GMS_REQUEST_TIMEOUT_MS),
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${options.apiKey}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
@@ -132,34 +172,54 @@ export async function callGmsJson<T>(
           content: prompt,
         },
       ],
-      temperature: 0.1,
+      ...(options.temperature !== undefined
+        ? { temperature: options.temperature }
+        : {}),
+      ...(options.reasoningEffort
+        ? { reasoning: { effort: options.reasoningEffort } }
+        : {}),
       max_output_tokens: options.maxOutputTokens,
       text: {
-        format: {
-          type: 'json_object',
-        },
+        format: options.jsonSchema
+          ? {
+            type: 'json_schema',
+            name: options.jsonSchema.name,
+            strict: true,
+            schema: options.jsonSchema.schema,
+          }
+          : {
+            type: 'json_object',
+          },
       },
     }),
   });
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`GMS API failed with ${response.status}: ${errorText.slice(0, 300)}`);
+    throw new Error(`${providerLabel} failed with ${response.status}: ${errorText.slice(0, 300)}`);
   }
 
   const responseBody: unknown = await response.json();
 
   if (!isRecord(responseBody)) {
-    throw new Error('GMS API response envelope was not an object.');
+    throw new Error(`${providerLabel} response envelope was not an object.`);
   }
 
   const data: GmsResponsesApiResponse = responseBody;
 
   if (data.status === 'incomplete') {
-    throw new Error(`GMS response incomplete: ${extractIncompleteReason(data)}`);
+    throw new Error(`${providerLabel} response incomplete: ${extractIncompleteReason(data)}`);
   }
 
   const content = extractOutputText(data);
 
-  return JSON.parse(extractJsonObject(content)) as T;
+  return {
+    data: JSON.parse(extractJsonObject(content)) as T,
+    ...(typeof data.id === 'string' && data.id.trim()
+      ? { responseId: data.id.trim() }
+      : {}),
+    ...(typeof data.model === 'string' && data.model.trim()
+      ? { model: data.model.trim() }
+      : {}),
+  };
 }

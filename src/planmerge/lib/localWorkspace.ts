@@ -36,12 +36,17 @@ export type LocalDecisionLog = {
   sectionKey: string;
   sectionTitle: string;
   topic: string;
-  action: 'selected_option_overridden';
+  action: 'selected_option_overridden' | 'ai_consensus_applied';
   beforeOptionId?: string;
   beforeValue?: string;
   afterOptionId: string;
   afterValue: string;
   reason: string;
+  model?: string;
+  responseId?: string;
+  generatedAt?: string;
+  supportingOptionIds?: string[];
+  addressedOpinionIds?: string[];
   createdAtLabel: string;
 };
 
@@ -359,10 +364,21 @@ function isValidDecisionLog(value: unknown): value is LocalDecisionLog {
     typeof value.sectionKey === 'string' &&
     typeof value.sectionTitle === 'string' &&
     typeof value.topic === 'string' &&
-    value.action === 'selected_option_overridden' &&
+    ['selected_option_overridden', 'ai_consensus_applied'].includes(String(value.action)) &&
     typeof value.afterOptionId === 'string' &&
     typeof value.afterValue === 'string' &&
     typeof value.reason === 'string' &&
+    (value.model === undefined || typeof value.model === 'string') &&
+    (value.responseId === undefined || typeof value.responseId === 'string') &&
+    (value.generatedAt === undefined || typeof value.generatedAt === 'string') &&
+    (
+      value.supportingOptionIds === undefined ||
+      (Array.isArray(value.supportingOptionIds) && value.supportingOptionIds.every((item) => typeof item === 'string'))
+    ) &&
+    (
+      value.addressedOpinionIds === undefined ||
+      (Array.isArray(value.addressedOpinionIds) && value.addressedOpinionIds.every((item) => typeof item === 'string'))
+    ) &&
     typeof value.createdAtLabel === 'string'
   );
 }

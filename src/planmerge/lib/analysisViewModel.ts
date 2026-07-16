@@ -112,9 +112,11 @@ function createDecisionTraceFromBlock(
       primaryBlock.needsHumanReview
         ? { label: '검토 필요', variant: 'warning' as const }
         : {
-          label: primaryBlock.selectionReason.startsWith('사용자가 ')
-            ? '사용자 선택'
-            : '자동 선택',
+          label: primaryBlock.selectionReason.startsWith('GPT-5.6 consensus:')
+            ? 'GPT-5.6 합의'
+            : primaryBlock.selectionReason.startsWith('사용자가 ')
+              ? '사용자 선택'
+              : '자동 선택',
           variant: 'success' as const,
         },
       ...(primaryBlock.conflictLevel !== 'none'

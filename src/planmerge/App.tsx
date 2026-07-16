@@ -61,7 +61,8 @@ import {
 } from './lib/sharedWorkspaceOwnerStore';
 import type { SharedWorkspaceOwnerAccess } from './lib/sharedWorkspaceOwnerStore';
 import { createDocumentSectionsFromAnalysis } from './lib/analysisViewModel';
-import { applyDecisionOptionOverride } from './lib/analysisOverride';
+import { applyDecisionOptionOverride, applyDecisionResolutionProposal } from './lib/analysisOverride';
+import type { DecisionResolutionResult } from './lib/ai/decisionResolution';
 import { evaluateAnalysisQuality, type QualityLevel } from './lib/analysisQuality';
 import { buildMarkdownExport } from './lib/exportMarkdown';
 import {
@@ -766,6 +767,71 @@ export default function App() {
     showNotice('선택안을 변경하고 최종 문서 섹션에 반영했습니다.');
   };
 
+  const applyDecisionResolution = (result: DecisionResolutionResult) => {
+    if (sharedWorkspaceId) {
+      showNotice(SHARED_READ_ONLY_NOTICE);
+      return;
+    }
+
+    if (
+      !result.applicable ||
+      result.source === 'local_fallback' ||
+      result.proposal.status !== 'ready'
+    ) {
+      showNotice('검증된 GPT-5.6 합의안만 적용할 수 있습니다.');
+      return;
+    }
+
+    const currentBlock = workspaceState.analysisResult?.decisionBlocks.find(
+      (block) => block.id === result.proposal.decisionBlockId,
+    );
+
+    if (!currentBlock) {
+      showNotice('적용할 Decision Block을 찾지 못했습니다.');
+      return;
+    }
+
+    setWorkspaceState((current) => {
+      if (!current.analysisResult) {
+        return current;
+      }
+
+      const block = current.analysisResult.decisionBlocks.find(
+        (item) => item.id === result.proposal.decisionBlockId,
+      );
+
+      if (!block) {
+        return current;
+      }
+
+      const beforeOption = block.options.find((option) => option.id === block.selectedOptionId);
+      const nextAnalysisResult = applyDecisionResolutionProposal(current.analysisResult, result);
+      const nextBlock = nextAnalysisResult.decisionBlocks.find((item) => item.id === block.id);
+      const nextOption = nextBlock?.options.find((option) => option.id === nextBlock.selectedOptionId);
+
+      if (nextAnalysisResult === current.analysisResult || !nextBlock || !nextOption) {
+        return current;
+      }
+
+      return {
+        ...current,
+        analysisResult: nextAnalysisResult,
+        approvedBlockIds: (current.approvedBlockIds ?? []).filter((blockId) => blockId !== block.id),
+        decisionLogs: [
+          ...current.decisionLogs,
+          createDecisionConsensusLog(
+            current.analysisRunId,
+            block,
+            beforeOption,
+            nextOption,
+            result,
+          ),
+        ],
+      };
+    });
+    showNotice('GPT-5.6 합의 패치를 적용했습니다. 변경 내용과 근거를 Decision Log에 기록했습니다.');
+  };
+
   const renderContent = () => {
     if (effectiveActiveView === 'setup') {
       return (
@@ -857,7 +923,11 @@ export default function App() {
             sharedWorkspaceId={sharedWorkspaceId}
             sharedSnapshotVersion={sharedWorkspaceSnapshotVersion}
             ownerShareAccess={sharedMode ? null : ownedShareAccess}
+            projectSettings={workspaceState.project}
+            analysisResult={workspaceState.analysisResult}
+            drafts={workspaceState.drafts}
             onApplyDecisionOption={sharedMode ? undefined : applyDecisionOption}
+            onApplyDecisionResolution={sharedMode ? undefined : applyDecisionResolution}
           />
         )}
       </>
@@ -1103,6 +1173,35 @@ function createDecisionOverrideLog(
     afterOptionId: afterOption.id,
     afterValue: afterOption.content,
     reason: '선택 과정 패널에서 사용자가 대안 또는 충돌 의견을 최종 선택안으로 적용했습니다.',
+    createdAtLabel: '방금',
+  };
+}
+
+function createDecisionConsensusLog(
+  analysisRunId: number,
+  block: ProtocolDecisionBlock,
+  beforeOption: ProtocolDecisionOption | undefined,
+  afterOption: ProtocolDecisionOption,
+  result: DecisionResolutionResult,
+): LocalDecisionLog {
+  return {
+    id: `decision-log-${crypto.randomUUID()}`,
+    analysisRunId,
+    decisionBlockId: block.id,
+    sectionKey: block.sectionKey,
+    sectionTitle: getProtocolSectionTitle(block.sectionKey),
+    topic: block.topic,
+    action: 'ai_consensus_applied',
+    beforeOptionId: beforeOption?.id,
+    beforeValue: beforeOption?.content,
+    afterOptionId: afterOption.id,
+    afterValue: afterOption.content,
+    reason: result.proposal.selectionReason,
+    model: result.model,
+    responseId: result.responseId,
+    generatedAt: result.generatedAt,
+    supportingOptionIds: result.proposal.supportingOptionIds,
+    addressedOpinionIds: result.proposal.addressedOpinionIds,
     createdAtLabel: '방금',
   };
 }

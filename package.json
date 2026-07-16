@@ -7,7 +7,9 @@
     "build": "next build",
     "postinstall": "prisma generate",
     "harness:local": "tsx scripts/run-planmerge-harness.ts",
-    "harness:quality": "tsx scripts/run-planmerge-quality-cases.ts",
+    "harness:protocol": "tsx scripts/run-planmerge-quality-cases.ts",
+    "harness:resolution": "tsx scripts/run-decision-resolution-cases.ts",
+    "harness:quality": "tsx scripts/run-planmerge-quality-cases.ts && tsx scripts/run-decision-resolution-cases.ts",
     "start": "next start",
     "lint": "eslint",
     "test:e2e": "playwright test"
