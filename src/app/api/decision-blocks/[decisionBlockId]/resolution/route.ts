@@ -185,19 +185,6 @@ function getDecisionProviderConfig(): DecisionProviderConfig | null {
     process.env.GMS_DECISION_MODEL,
     DEFAULT_DECISION_MODEL,
   );
-  const gms = getGmsConfig();
-  const gmsApiKey = normalizeSecret(gms.apiKey);
-
-  if (gmsApiKey) {
-    return {
-      source: 'gms',
-      apiKey: gmsApiKey,
-      apiUrl: gms.apiUrl,
-      model,
-      providerLabel: 'GMS Responses API',
-    };
-  }
-
   const openAiApiKey = normalizeSecret(process.env.OPENAI_API_KEY);
 
   if (openAiApiKey) {
@@ -210,6 +197,19 @@ function getDecisionProviderConfig(): DecisionProviderConfig | null {
       ),
       model,
       providerLabel: 'OpenAI Responses API',
+    };
+  }
+
+  const gms = getGmsConfig();
+  const gmsApiKey = normalizeSecret(gms.apiKey);
+
+  if (gmsApiKey) {
+    return {
+      source: 'gms',
+      apiKey: gmsApiKey,
+      apiUrl: gms.apiUrl,
+      model,
+      providerLabel: 'GMS Responses API',
     };
   }
 
