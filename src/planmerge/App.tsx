@@ -31,7 +31,6 @@ import {
   getServerWorkspaceStorageFailureNoticeSnapshot,
   getWorkspaceRegistrySnapshot,
   getWorkspaceStorageFailureNoticeSnapshot,
-  isSampleWorkspaceState,
   loadLocalWorkspaceSession,
   parseWorkspaceImport,
   SAMPLE_WORKSPACE_ID,
@@ -45,7 +44,13 @@ import type {
   LocalWorkspaceSession,
   ProjectSettings,
 } from './lib/localWorkspace';
-import { generatePlanMergeAnalysis } from './lib/ai/planmergeAnalysisClient';
+import { AnalysisFailureError, generatePlanMergeAnalysis } from './lib/ai/planmergeAnalysisClient';
+import { AnalysisKeySetup, type AnalysisKeyStatus } from './components/AnalysisKeySetup';
+import {
+  fetchServerAnalysisStatus,
+  loadAnalysisCredentials,
+  type StoredAnalysisCredentials,
+} from './lib/analysisKeyStore';
 import {
   createSharedWorkspace,
   fetchSharedWorkspace,
@@ -74,6 +79,13 @@ import type { DocumentSectionData } from './data/mergeResult';
 
 type AnalysisStatus = 'idle' | 'analyzing' | 'completed';
 
+type AnalysisFailure = {
+  message: string;
+  detail?: string;
+  retryable: boolean;
+  code?: string;
+};
+
 const SHARED_READ_ONLY_NOTICE = '공유 보기에서는 사용할 수 없습니다.';
 const MAX_DRAFT_COUNT = 30;
 
@@ -81,6 +93,15 @@ export default function App() {
   const [activeView, setActiveView] = useState<AppView>('setup');
   const [activeSection, setActiveSection] = useState(7);
   const [analysisStatus, setAnalysisStatus] = useState<AnalysisStatus>('idle');
+  // 분석 실패는 2.4초 토스트로 사라지면 안 된다. 사용자가 재시도할지 수동으로
+  // 진행할지 정할 때까지 화면에 남긴다.
+  const [analysisError, setAnalysisError] = useState<AnalysisFailure | null>(null);
+  // 서버에 키가 있으면 묻지 않고, 없으면 이 브라우저에 저장된 사용자 키를 쓴다.
+  const [analysisKeyStatus, setAnalysisKeyStatus] = useState<AnalysisKeyStatus>({
+    serverConfigured: false,
+    credentials: null,
+    loaded: false,
+  });
   const [workspaceState, setWorkspaceState] = useState(createEmptyWorkspaceState);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
   const [hasLoadedWorkspace, setHasLoadedWorkspace] = useState(false);
@@ -118,7 +139,6 @@ export default function App() {
   }, [activeSectionBlockIds, workspaceState.approvedBlockIds]);
   const displayedIdeaCount = workspaceState.analysisResult?.normalizedIdeas.length
     ?? mergeSections.filter((section) => section.content.trim()).length;
-  const sampleWorkspace = activeWorkspaceId === SAMPLE_WORKSPACE_ID || isSampleWorkspaceState(workspaceState);
   const workspaceScopeKey = sharedWorkspaceId
     ? `shared:${sharedWorkspaceId}:${sharedWorkspaceSnapshotVersion ?? 1}`
     : `local:${activeWorkspaceId ?? 'pending'}`;
@@ -134,6 +154,39 @@ export default function App() {
       workspaceState.analysisResult,
     ).level;
   }, [workspaceState.analysisResult, workspaceState.drafts, workspaceState.project]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      const serverStatus = await fetchServerAnalysisStatus();
+
+      if (cancelled) {
+        return;
+      }
+
+      setAnalysisKeyStatus({
+        serverConfigured: serverStatus.serverConfigured,
+        credentials: loadAnalysisCredentials(),
+        loaded: true,
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleAnalysisCredentialsChange = useCallback((credentials: StoredAnalysisCredentials | null) => {
+    setAnalysisKeyStatus((current) => ({ ...current, credentials }));
+
+    // 키를 막 등록했다면 직전의 "키 없음" 오류는 더 이상 유효하지 않다.
+    if (credentials) {
+      setAnalysisError((current) => (
+        current?.code === 'analysis_provider_unconfigured' ? null : current
+      ));
+    }
+  }, []);
 
   const showNotice = useCallback((message: string) => {
     setNotice(message);
@@ -304,7 +357,7 @@ export default function App() {
   const deleteWorkspace = (workspaceId: string) => {
     const metadata = workspaceRegistry.find((entry) => entry.id === workspaceId);
     const title = workspaceId === SAMPLE_WORKSPACE_ID
-      ? '검증 샘플'
+      ? '예시 초안'
       : metadata?.title.trim() || '워크스페이스';
 
     if (!window.confirm(`${title} 워크스페이스를 삭제할까요? 이 브라우저의 저장 데이터에서만 삭제됩니다.`)) {
@@ -401,7 +454,7 @@ export default function App() {
     const sampleWorkspace = createSampleWorkspaceState();
     const created = createWorkspaceEntry(sampleWorkspace, {
       workspaceId: SAMPLE_WORKSPACE_ID,
-      titleFallback: '검증 샘플',
+      titleFallback: '예시 초안',
     });
 
     leaveSharedMode();
@@ -412,10 +465,10 @@ export default function App() {
     });
     setOwnedShareAccess(loadOwnerAccessForLocalWorkspace(SAMPLE_WORKSPACE_ID));
     setActiveSection(7);
-    setActiveView('merge');
+    setActiveView('drafts');
 
     if (created.saved) {
-      showNotice('샘플 워크스페이스를 불러왔습니다.');
+      showNotice(`예시 초안 ${sampleWorkspace.drafts.length}개를 불러왔습니다. 분석을 실행하면 병합 결과가 만들어집니다.`);
     }
   };
 
@@ -496,12 +549,31 @@ export default function App() {
     };
 
     setAnalysisStatus('analyzing');
+    setAnalysisError(null);
     showNotice('병합 분석을 실행합니다.');
 
-    const [analysisResult] = await Promise.all([
-      generatePlanMergeAnalysis(payload),
-      waitForLoadingTime(900),
-    ]);
+    let analysisResult;
+
+    try {
+      [analysisResult] = await Promise.all([
+        generatePlanMergeAnalysis(payload),
+        waitForLoadingTime(900),
+      ]);
+    } catch (error) {
+      const failure: AnalysisFailure = error instanceof AnalysisFailureError
+        ? { message: error.message, detail: error.detail, retryable: error.retryable, code: error.code }
+        : {
+          message: '분석 중 알 수 없는 오류가 발생했습니다.',
+          detail: error instanceof Error ? error.message : undefined,
+          retryable: true,
+        };
+
+      setAnalysisError(failure);
+      // 실패했으므로 직전 결과가 있으면 그대로 두고, 없으면 분석 전 상태로 돌린다.
+      setAnalysisStatus(workspaceState.analysisResult ? 'completed' : 'idle');
+      showNotice(failure.message);
+      return;
+    }
 
     setWorkspaceState((current) => ({
       ...current,
@@ -840,6 +912,8 @@ export default function App() {
           project={workspaceState.project}
           onLoadSample={loadSampleWorkspace}
           onSave={saveProject}
+          analysisKeyStatus={analysisKeyStatus}
+          onAnalysisCredentialsChange={handleAnalysisCredentialsChange}
         />
       );
     }
@@ -995,9 +1069,38 @@ export default function App() {
             공유된 워크스페이스를 보고 있습니다. 투표·의견·초안 제출만 반영됩니다.
           </div>
         )}
-        {effectiveActiveView === 'merge' && workspaceState.analysisResult?.source === 'local_harness' && !sampleWorkspace && (
-          <div className="border-b border-amber-100 bg-amber-50 px-8 py-2 text-sm text-amber-800">
-            로컬 하네스 결과입니다. 실제 모델 호출 전 구조 검증과 화면 연결 확인에 사용합니다.
+        <AnalysisKeySetup
+          status={analysisKeyStatus}
+          onCredentialsChange={handleAnalysisCredentialsChange}
+          variant="banner"
+        />
+        {analysisError && (
+          <div className="flex items-start justify-between gap-4 border-b border-red-100 bg-red-50 px-8 py-3 text-sm text-red-800">
+            <div className="min-w-0">
+              <div className="font-medium">분석에 실패했습니다.</div>
+              <div className="mt-0.5">{analysisError.message}</div>
+              {analysisError.detail && (
+                <div className="mt-1 break-words text-xs text-red-700/80">{analysisError.detail}</div>
+              )}
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              {analysisError.retryable && !sharedWorkspaceId && (
+                <button
+                  type="button"
+                  onClick={reanalyze}
+                  className="rounded border border-red-300 bg-white px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-100"
+                >
+                  다시 시도
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setAnalysisError(null)}
+                className="rounded px-2 py-1 text-xs text-red-700 hover:bg-red-100"
+              >
+                닫기
+              </button>
+            </div>
           </div>
         )}
         <div className="flex flex-1 min-h-0 flex-col overflow-y-auto xl:flex-row xl:overflow-hidden">

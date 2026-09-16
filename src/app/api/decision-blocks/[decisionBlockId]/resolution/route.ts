@@ -3,25 +3,24 @@ import { auth } from '@/auth';
 import { applyDecisionResolutionProposal } from '@/planmerge/lib/analysisOverride';
 import {
   buildDecisionResolutionPrompt,
-  createNonApplicableDecisionResolution,
   decisionResolutionProposalJsonSchema,
   parseDecisionResolutionPayload,
   parseDecisionResolutionResult,
   validateDecisionResolutionProposal,
 } from '@/planmerge/lib/ai/decisionResolution';
-import type {
-  DecisionResolutionPayload,
-  DecisionResolutionResult,
-} from '@/planmerge/lib/ai/decisionResolution';
+import type { DecisionResolutionResult } from '@/planmerge/lib/ai/decisionResolution';
 import {
   callResponsesJsonWithMetadata,
-  getGmsConfig,
+  getAnalysisConfig,
 } from '@/planmerge/lib/ai/gmsServer';
 import { validatePlanMergeAnalysis } from '@/planmerge/lib/ai/planmergeProtocol';
 import { checkRateLimit, getClientKey } from '@/server/rateLimit';
 
+// 추론 모델 한 번 호출이므로 분석보다 짧지만, 플랫폼 기본 타임아웃보다는 길어야 한다.
+export const maxDuration = 120;
+
 const RATE_LIMIT = { limit: 10, windowMs: 60_000 };
-const DEFAULT_DECISION_MODEL = 'gpt-5.6';
+const DEFAULT_DECISION_MODEL = 'gpt-5.6-luna';
 const DEFAULT_OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 
 type RouteContext = {
@@ -83,12 +82,13 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const provider = getDecisionProviderConfig();
+  const provider = getDecisionProviderConfig(request);
 
   if (!provider) {
-    return fallbackResponse(
-      payload,
-      'GMS_API_KEY와 OPENAI_API_KEY가 없어 GPT-5.6 합의안을 생성하지 못했습니다.',
+    return failureResponse(
+      503,
+      'decision_provider_unconfigured',
+      '합의안 생성에 사용할 API 키가 없습니다. 화면에서 키를 등록하거나 서버에 OPENAI_API_KEY를 설정해 주세요.',
     );
   }
 
@@ -116,9 +116,10 @@ export async function POST(request: Request, context: RouteContext) {
         proposalValidation.errors,
       );
 
-      return fallbackResponse(
-        payload,
-        'GPT-5.6 응답이 Decision Room 구조 검증을 통과하지 못해 적용 가능한 변경안을 제공하지 않습니다.',
+      return failureResponse(
+        502,
+        'proposal_validation_failed',
+        `${provider.model} 응답이 Decision Room 구조 검증을 통과하지 못했습니다.`,
       );
     }
 
@@ -138,9 +139,10 @@ export async function POST(request: Request, context: RouteContext) {
         resultValidation.errors,
       );
 
-      return fallbackResponse(
-        payload,
-        'GPT-5.6 응답 메타데이터 검증에 실패해 적용 가능한 변경안을 제공하지 않습니다.',
+      return failureResponse(
+        502,
+        'envelope_validation_failed',
+        `${provider.model} 응답 메타데이터 검증에 실패했습니다.`,
       );
     }
 
@@ -160,30 +162,32 @@ export async function POST(request: Request, context: RouteContext) {
           patchedValidation.errors,
         );
 
-        return fallbackResponse(
-          payload,
-          'GPT-5.6 합의안을 적용한 결과가 PlanMerge 출처 검증을 통과하지 못했습니다.',
+        return failureResponse(
+          502,
+          'patch_validation_failed',
+          `${provider.model} 합의안을 적용한 결과가 PlanMerge 출처 검증을 통과하지 못했습니다.`,
         );
       }
     }
 
     return NextResponse.json(resultValidation.result);
   } catch (error) {
-    // Upstream response bodies may contain gateway details, so expose only a stable warning.
-    console.error('[decision-resolution] GPT-5.6 request failed:', error);
+    // Upstream response bodies may contain gateway details, so expose only a stable message.
+    console.error('[decision-resolution] resolution request failed:', error);
 
-    return fallbackResponse(
-      payload,
-      'GPT-5.6 호출에 실패해 현재 결정과 출처를 그대로 유지합니다.',
+    return failureResponse(
+      502,
+      'upstream_request_failed',
+      `${provider.model} 호출에 실패했습니다. 잠시 후 다시 시도해 주세요.`,
     );
   }
 }
 
-function getDecisionProviderConfig(): DecisionProviderConfig | null {
-  const model = firstNonEmpty(
+function getDecisionProviderConfig(request: Request): DecisionProviderConfig | null {
+  const serverModel = firstNonEmpty(
     process.env.DECISION_MODEL,
+    process.env.OPENAI_DECISION_MODEL,
     process.env.GMS_DECISION_MODEL,
-    DEFAULT_DECISION_MODEL,
   );
   const openAiApiKey = normalizeSecret(process.env.OPENAI_API_KEY);
 
@@ -195,29 +199,36 @@ function getDecisionProviderConfig(): DecisionProviderConfig | null {
         process.env.OPENAI_RESPONSES_URL,
         DEFAULT_OPENAI_RESPONSES_URL,
       ),
-      model,
+      model: serverModel || DEFAULT_DECISION_MODEL,
       providerLabel: 'OpenAI Responses API',
     };
   }
 
-  const gms = getGmsConfig();
-  const gmsApiKey = normalizeSecret(gms.apiKey);
+  // 서버 키가 없으면 사용자가 브라우저에서 보낸 자기 키로 해결한다.
+  // 그 키가 접근할 수 있는 모델은 등록 시점에 확인해 두었으므로 함께 온 모델을 쓴다.
+  const config = getAnalysisConfig(request);
+  const apiKey = normalizeSecret(config.apiKey);
 
-  if (gmsApiKey) {
-    return {
-      source: 'gms',
-      apiKey: gmsApiKey,
-      apiUrl: gms.apiUrl,
-      model,
-      providerLabel: 'GMS Responses API',
-    };
+  if (!apiKey) {
+    return null;
   }
 
-  return null;
+  return {
+    source: config.provider,
+    apiKey,
+    apiUrl: config.apiUrl,
+    model: config.keySource === 'request'
+      ? config.model
+      : (serverModel || DEFAULT_DECISION_MODEL),
+    providerLabel: config.provider === 'openai' ? 'OpenAI Responses API' : 'GMS Responses API',
+  };
 }
 
-function fallbackResponse(payload: DecisionResolutionPayload, warning: string) {
-  return NextResponse.json(createNonApplicableDecisionResolution(payload, warning));
+// 생성 실패를 200 응답으로 포장하면 UI가 그것을 하나의 "결과"로 렌더링하고, 사용자는
+// 모델이 판단한 것과 규칙이 포기한 것을 구분할 수 없다. 실패는 실패 상태 코드로 노출해
+// 클라이언트가 재시도나 수동 결정을 선택하게 한다.
+function failureResponse(status: number, code: string, message: string) {
+  return NextResponse.json({ code, errors: [message] }, { status });
 }
 
 function normalizeSecret(value: string | undefined) {

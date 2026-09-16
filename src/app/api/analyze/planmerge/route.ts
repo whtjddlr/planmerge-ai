@@ -7,7 +7,7 @@ import {
   conflictsWithForbiddenDirection,
   documentSectionDefinitions,
   parsePlanMergeAnalysisPayload,
-  runLocalPlanMergeHarness,
+  ensureAssumptionBackedBlocksAreReviewed,
   validateDraftNormalizeResult,
   validatePlanMergeAnalysis,
 } from '@/planmerge/lib/ai/planmergeProtocol';
@@ -23,11 +23,23 @@ import type {
   ProtocolDecisionOption,
   ProtocolFinalDocumentSection,
 } from '@/planmerge/lib/ai/planmergeProtocol';
-import { callGmsJson, getGmsConfig } from '@/planmerge/lib/ai/gmsServer';
+import { callGmsJson, getAnalysisConfig } from '@/planmerge/lib/ai/gmsServer';
+import type { GmsConfig } from '@/planmerge/lib/ai/gmsServer';
 import { checkRateLimit, getClientKey } from '@/server/rateLimit';
 
-// 요청 1건이 초안 수만큼의 GMS 호출을 발생시키므로 보수적으로 제한한다.
+// 초안 30개 × normalize 1회 + merge까지 한 요청 안에서 끝나야 한다. 플랫폼 기본
+// 타임아웃(수십 초)에 걸리면 사용자는 원인을 알 수 없는 실패만 보게 되므로 명시한다.
+// Vercel에서는 플랜 한도를 넘는 값을 쓰면 배포가 거절되니 플랜을 바꾸면 같이 조정한다.
+export const maxDuration = 300;
+
+// 요청 1건이 초안 수만큼의 모델 호출을 발생시키므로 보수적으로 제한한다.
 const RATE_LIMIT = { limit: 5, windowMs: 60_000 };
+// 초안 전부를 한꺼번에 던지면 업스트림 rate limit을 자초한다. 동시 실행을 묶어
+// 429를 줄이고, 재시도 백오프가 실제로 회복할 여지를 남긴다.
+const NORMALIZE_CONCURRENCY = 6;
+// merge 출력은 초안 수에 따라 커진다. 예산이 모자라면 응답이 incomplete로 잘려
+// 전체 요청이 실패하므로, 아이디어 에코를 없앤 뒤에도 여유를 둔다.
+const MERGE_MAX_OUTPUT_TOKENS = 32_000;
 
 const normalizedIdeaTypes = new Set<NormalizedIdeaType>([
   'problem',
@@ -50,33 +62,78 @@ const normalizedIdeaIntents = new Set<NormalizedIdeaIntent>([
   'question',
 ]);
 
-function buildFallback(payload: PlanMergeAnalysisPayload, warning: string): PlanMergeAnalysisResult {
-  const fallback = runLocalPlanMergeHarness(payload);
-
-  return {
-    ...fallback,
-    warnings: [warning, ...fallback.warnings],
-  };
+// 규칙 기반 로컬 결과를 정상 응답으로 돌려주면 사용자는 모델이 의미를 비교한 결과와
+// 키워드 매칭이 만들어낸 결과를 구분할 수 없다. 운영에서는 분석이 불가능하면 실패로
+// 노출하고, 어느 단계에서 멈췄는지 code로 알린다.
+function failureResponse(status: number, code: string, message: string) {
+  return NextResponse.json({ code, errors: [message] }, { status });
 }
 
-async function normalizeDrafts(payload: PlanMergeAnalysisPayload) {
-  const normalizeResults = await Promise.all(
-    payload.drafts
-      .filter((draft) => draft.rawText.trim())
-      .map(async (draft) => {
-        const rawResult = await callGmsJson<DraftNormalizeResult>(
-          buildDraftNormalizePrompt(payload.project, draft),
-          { maxOutputTokens: 4000 },
-        );
-        const result = normalizeDraftProtocolResult(draft, rawResult);
-        const validation = validateDraftNormalizeResult(draft, result);
+/**
+ * 정해진 동시 실행 수로 순회하고, 한 건이라도 실패하면 남은 호출을 중단한다.
+ *
+ * Promise.all은 첫 실패로 즉시 거절하지만 이미 떠 있는 요청은 그대로 완주한다.
+ * 그 응답은 아무도 쓰지 않으면서 토큰만 쓰므로, 중단 신호로 끊는다.
+ */
+async function mapWithConcurrency<TItem, TResult>(
+  items: TItem[],
+  concurrency: number,
+  task: (item: TItem, signal: AbortSignal) => Promise<TResult>,
+): Promise<TResult[]> {
+  const results = new Array<TResult>(items.length);
+  const controller = new AbortController();
+  let nextIndex = 0;
 
-        if (!validation.valid) {
-          throw new Error(`Normalize validation failed for ${draft.id}: ${validation.errors.join(', ')}`);
-        }
+  const worker = async () => {
+    for (;;) {
+      const index = nextIndex;
+      nextIndex += 1;
 
-        return result.normalizedIdeas;
-      }),
+      if (index >= items.length || controller.signal.aborted) {
+        return;
+      }
+
+      results[index] = await task(items[index], controller.signal);
+    }
+  };
+
+  const workers = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    () => worker(),
+  );
+
+  try {
+    await Promise.all(workers);
+  } catch (error) {
+    controller.abort();
+    // 중단된 작업들이 정리될 때까지 기다린 뒤 원래 오류를 올린다.
+    await Promise.allSettled(workers);
+    throw error;
+  }
+
+  return results;
+}
+
+async function normalizeDrafts(payload: PlanMergeAnalysisPayload, config: GmsConfig) {
+  const drafts = payload.drafts.filter((draft) => draft.rawText.trim());
+
+  const normalizeResults = await mapWithConcurrency(
+    drafts,
+    NORMALIZE_CONCURRENCY,
+    async (draft, signal) => {
+      const rawResult = await callGmsJson<DraftNormalizeResult>(
+        buildDraftNormalizePrompt(payload.project, draft),
+        { maxOutputTokens: 4000, signal, config },
+      );
+      const result = normalizeDraftProtocolResult(draft, rawResult);
+      const validation = validateDraftNormalizeResult(draft, result);
+
+      if (!validation.valid) {
+        throw new Error(`Normalize validation failed for ${draft.id}: ${validation.errors.join(', ')}`);
+      }
+
+      return result.normalizedIdeas;
+    },
   );
 
   return normalizeResults.flat();
@@ -89,7 +146,7 @@ function normalizeDraftProtocolResult(
   const ids = new Set<string>();
 
   return {
-    protocolVersion: '0.1',
+    protocolVersion: '0.2',
     source: result.source,
     warnings: Array.isArray(result.warnings) ? result.warnings : [],
     normalizedIdeas: (Array.isArray(result.normalizedIdeas) ? result.normalizedIdeas : [])
@@ -119,6 +176,7 @@ function normalizeDraftProtocolResult(
           normalizedText: typeof idea.normalizedText === 'string' && idea.normalizedText.trim()
             ? idea.normalizedText.trim()
             : draft.rawText.slice(0, 240),
+          forbiddenDirectionConflict: idea.forbiddenDirectionConflict,
           intent: normalizedIdeaIntents.has(idea.intent)
             ? idea.intent
             : inferIntentFromText(idea.normalizedText),
@@ -167,23 +225,24 @@ function inferIntentFromText(text: unknown): NormalizedIdeaIntent {
   return 'propose';
 }
 
+// merge 모델은 아이디어를 돌려주지 않는다. 서버가 정규화 단계에서 검증한 배열을 붙인다.
+// 모델이 굳이 배열을 돌려줬다면 그 값은 버리고 그 사실을 경고로 남긴다.
 function ensureMergeUsesCanonicalIdeas(
   result: PlanMergeAnalysisResult,
   normalizedIdeas: NormalizedIdea[],
 ): PlanMergeAnalysisResult {
-  const returnedIdeas = Array.isArray(result.normalizedIdeas) ? result.normalizedIdeas : [];
-  const sameIdeas = JSON.stringify(returnedIdeas) === JSON.stringify(normalizedIdeas);
-
-  if (sameIdeas) {
-    return result;
-  }
+  const returnedIdeas = result.normalizedIdeas;
+  const modelEchoedIdeas = Array.isArray(returnedIdeas)
+    && JSON.stringify(returnedIdeas) !== JSON.stringify(normalizedIdeas);
 
   return {
     ...result,
     normalizedIdeas,
     warnings: [
       ...(Array.isArray(result.warnings) ? result.warnings : []),
-      'GMS merge 응답의 normalizedIdeas는 서버에서 검증 완료한 아이디어로 고정했습니다.',
+      ...(modelEchoedIdeas
+        ? ['merge 응답이 돌려준 normalizedIdeas는 버리고 서버에서 검증한 아이디어로 고정했습니다.']
+        : []),
     ],
   };
 }
@@ -206,7 +265,7 @@ function ensureCanonicalMissingSections(result: PlanMergeAnalysisResult): PlanMe
     missingSections,
     warnings: [
       ...result.warnings,
-      'GMS 응답의 missingSections는 서버에서 최종 문서 섹션 기준으로 보정했습니다.',
+      '응답의 missingSections는 서버에서 최종 문서 섹션 기준으로 보정했습니다.',
     ],
   };
 }
@@ -221,7 +280,7 @@ function hasMergeResultShape(result: unknown): result is PlanMergeAnalysisResult
   const record = result as Record<string, unknown>;
 
   return (
-    Array.isArray(record.normalizedIdeas) &&
+    // normalizedIdeas는 모델이 돌려주지 않는다. 서버가 검증된 아이디어를 붙인다.
     Array.isArray(record.finalDocumentSections) &&
     Array.isArray(record.missingSections) &&
     Array.isArray(record.warnings) &&
@@ -245,10 +304,12 @@ function postProcessMergeResult(
   }
 
   return ensureCanonicalMissingSections(
-    ensureFinalDocumentCoverage(
-      ensureDecisionBlockCoverage(
-        payload,
-        ensureMergeUsesCanonicalIdeas(result, normalizedIdeas),
+    ensureAssumptionBackedBlocksAreReviewed(
+      ensureFinalDocumentCoverage(
+        ensureDecisionBlockCoverage(
+          payload,
+          ensureMergeUsesCanonicalIdeas(result, normalizedIdeas),
+        ),
       ),
     ),
   );
@@ -290,7 +351,7 @@ function ensureDecisionBlockCoverage(
     }
 
     const selectedOption = targetBlock.options.find((option) => option.id === targetBlock.selectedOptionId);
-    const isConflict = conflictsWithForbiddenDirection(payload.project.forbiddenDirection, idea);
+    const isConflict = conflictsWithForbiddenDirection(idea);
     const optionType: ProtocolDecisionOption['optionType'] = isConflict ? 'conflict' : 'alternative';
 
     targetBlock.options.push({
@@ -322,7 +383,7 @@ function ensureDecisionBlockCoverage(
   );
   const warnings = [
     ...result.warnings,
-    `GMS merge가 반영하지 않은 ${uncoveredIdeas.length}개 아이디어를 서버에서 Decision Block에 보강했습니다.`,
+    `merge 응답이 반영하지 않은 ${uncoveredIdeas.length}개 아이디어를 서버에서 Decision Block에 보강했습니다.`,
   ];
 
   if (attachedOptionCount > 0) {
@@ -347,10 +408,10 @@ function createServerDecisionBlock(
   existingBlockIds: Set<string>,
   existingOptionIds: Set<string>,
 ): ProtocolDecisionBlock {
-  const selectedIdea = chooseServerSelectedIdea(payload, ideas);
+  const selectedIdea = chooseServerSelectedIdea(ideas);
   const options = ideas.map((idea) => {
     const isSelected = idea.id === selectedIdea.id;
-    const isConflict = !isSelected && conflictsWithForbiddenDirection(payload.project.forbiddenDirection, idea);
+    const isConflict = !isSelected && conflictsWithForbiddenDirection(idea);
 
     return {
       id: uniqueId(`server_option_${safeId(idea.id)}`, existingOptionIds),
@@ -370,7 +431,7 @@ function createServerDecisionBlock(
     sectionKey: selectedIdea.sectionKey,
     topic: selectedIdea.topic,
     selectedOptionId: options.find((option) => option.optionType === 'selected')?.id ?? options[0].id,
-    selectionReason: 'GMS merge가 이 아이디어를 Decision Block에 반영하지 않아, 서버가 검증된 출처 아이디어를 기준으로 보강했습니다.',
+    selectionReason: 'merge 응답이 이 아이디어를 Decision Block에 반영하지 않아, 서버가 검증된 출처 아이디어를 기준으로 보강했습니다.',
     confidence: Math.min(Math.max(selectedIdea.confidence, 0.58), 0.82),
     conflictLevel,
     needsHumanReview: conflictLevel !== 'none' || selectedIdea.confidence < 0.65,
@@ -423,9 +484,8 @@ function ensureFinalDocumentCoverage(result: PlanMergeAnalysisResult): PlanMerge
   };
 }
 
-function chooseServerSelectedIdea(payload: PlanMergeAnalysisPayload, ideas: NormalizedIdea[]) {
-  return ideas.find((idea) => !conflictsWithForbiddenDirection(payload.project.forbiddenDirection, idea))
-    ?? ideas[0];
+function chooseServerSelectedIdea(ideas: NormalizedIdea[]) {
+  return ideas.find((idea) => !conflictsWithForbiddenDirection(idea)) ?? ideas[0];
 }
 
 function inferConflictLevelFromOptions(options: ProtocolDecisionOption[]): ProtocolDecisionBlock['conflictLevel'] {
@@ -503,19 +563,25 @@ export async function POST(request: Request) {
   const { payload } = parsedPayload;
 
   if (!payload.drafts.length) {
-    return NextResponse.json(buildFallback(payload, '분석할 초안이 없어 로컬 하네스 결과를 반환했습니다.'));
+    return failureResponse(400, 'no_drafts', '분석할 초안이 없습니다. 초안을 하나 이상 입력해 주세요.');
   }
 
-  if (!getGmsConfig().apiKey) {
-    return NextResponse.json(buildFallback(payload, '분석 API 키가 없어 로컬 규칙으로 정리했습니다. 의미 기반 비교 결과가 아니므로 직접 검토해 주세요.'));
+  const config = getAnalysisConfig(request);
+
+  if (!config.apiKey) {
+    return failureResponse(
+      503,
+      'analysis_provider_unconfigured',
+      'AI 분석에 사용할 API 키가 없습니다. 화면에서 키를 등록하거나 서버에 OPENAI_API_KEY를 설정해 주세요.',
+    );
   }
 
   try {
-    const normalizedIdeas = await normalizeDrafts(payload);
+    const normalizedIdeas = await normalizeDrafts(payload, config);
     const mergePrompt = buildMergeNormalizedIdeasPrompt(payload, normalizedIdeas);
     const mergeResultRaw = await callGmsJson<PlanMergeAnalysisResult>(
       mergePrompt,
-      { maxOutputTokens: 8000 },
+      { maxOutputTokens: MERGE_MAX_OUTPUT_TOKENS, config },
     );
     const mergeResult = postProcessMergeResult(payload, mergeResultRaw, normalizedIdeas);
     const validation = validatePlanMergeAnalysis(payload, mergeResult);
@@ -523,13 +589,13 @@ export async function POST(request: Request) {
     if (validation.valid) {
       return NextResponse.json({
         ...mergeResult,
-        source: getGmsConfig().provider,
+        source: config.provider,
       } satisfies PlanMergeAnalysisResult);
     }
 
     const repairedResultRaw = await callGmsJson<PlanMergeAnalysisResult>(
-      buildPlanMergeRepairPrompt(payload, mergeResult, validation.errors),
-      { maxOutputTokens: 8000 },
+      buildPlanMergeRepairPrompt(payload, mergeResult, validation.errors, normalizedIdeas),
+      { maxOutputTokens: MERGE_MAX_OUTPUT_TOKENS, config },
     );
     const repairedResult = postProcessMergeResult(payload, repairedResultRaw, normalizedIdeas);
     const repairValidation = validatePlanMergeAnalysis(payload, repairedResult);
@@ -540,7 +606,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       ...repairedResult,
-      source: getGmsConfig().provider,
+      source: config.provider,
       warnings: [
         ...repairedResult.warnings,
         '1차 merge 검증 실패 후 repair prompt로 복구했습니다.',
@@ -548,10 +614,12 @@ export async function POST(request: Request) {
     } satisfies PlanMergeAnalysisResult);
   } catch (error) {
     // 업스트림 오류 본문에는 게이트웨이 내부 정보가 섞일 수 있어 서버 로그에만 남긴다.
-    console.error('[analyze/planmerge] GMS analysis failed:', error);
+    console.error('[analyze/planmerge] analysis failed:', error);
 
-    return NextResponse.json(
-      buildFallback(payload, 'AI 분석 실패로 로컬 규칙을 사용했습니다. 의미 기반 비교 결과가 아니므로 직접 검토해 주세요.'),
+    return failureResponse(
+      502,
+      'analysis_failed',
+      `${config.model} 분석에 실패했습니다. 잠시 후 다시 시도해 주세요.`,
     );
   }
 }

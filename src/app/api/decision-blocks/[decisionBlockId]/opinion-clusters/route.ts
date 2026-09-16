@@ -2,17 +2,17 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import {
   buildOpinionClusteringPrompt,
-  createLocalFallbackClusters,
   parseOpinionClusteringPayload,
   validateOpinionClusters,
 } from '@/planmerge/lib/ai/opinionClustering';
 import type {
   OpinionCluster,
-  OpinionClusteringPayload,
   OpinionClusteringResult,
 } from '@/planmerge/lib/ai/opinionClustering';
-import { callGmsJson, getGmsConfig } from '@/planmerge/lib/ai/gmsServer';
+import { callGmsJson, getAnalysisConfig } from '@/planmerge/lib/ai/gmsServer';
 import { checkRateLimit, getClientKey } from '@/server/rateLimit';
+
+export const maxDuration = 60;
 
 const RATE_LIMIT = { limit: 20, windowMs: 60_000 };
 
@@ -22,15 +22,10 @@ type RouteContext = {
   }>;
 };
 
-function fallbackResponse(payload: OpinionClusteringPayload, warning: string) {
-  const result: OpinionClusteringResult = {
-    clusters: createLocalFallbackClusters(payload),
-    source: 'local_fallback',
-    model: 'local-rules',
-    warning,
-  };
-
-  return NextResponse.json(result);
+// 의견 클러스터링은 "비슷한 의견을 묶는" 의미 작업이다. 규칙 기반 묶음을 같은
+// 자리에 끼워 넣으면 사용자는 모델이 읽고 묶은 것으로 오해한다. 실패는 실패로 알린다.
+function failureResponse(status: number, code: string, message: string) {
+  return NextResponse.json({ code, errors: [message] }, { status });
 }
 
 function readClusterResponse(response: { clusters?: OpinionCluster[] }) {
@@ -82,18 +77,24 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
+  const config = getAnalysisConfig(request);
+  const { apiKey, model, provider } = config;
+
+  // 의견이 없는 것은 실패가 아니라 정상적인 빈 결과다. 모델 호출 없이 비어 있음을 알린다.
   if (payload.opinions.length === 0) {
     return NextResponse.json({
       clusters: [],
-      source: 'local_fallback',
-      model: 'local-rules',
+      source: 'empty',
+      model: 'none',
     } satisfies OpinionClusteringResult);
   }
 
-  const { apiKey, model } = getGmsConfig();
-
   if (!apiKey) {
-    return fallbackResponse(payload, 'GMS_API_KEY가 없어 로컬 규칙 기반 요약을 사용했습니다.');
+    return failureResponse(
+      503,
+      'clustering_provider_unconfigured',
+      '의견 요약에 사용할 API 키가 없습니다. 화면에서 키를 등록하거나 서버에 OPENAI_API_KEY를 설정해 주세요.',
+    );
   }
 
   try {
@@ -103,6 +104,7 @@ export async function POST(request: Request, context: RouteContext) {
       {
         maxOutputTokens: 2400,
         model,
+        config,
       },
     );
     const clusters = readClusterResponse(rawResult);
@@ -114,13 +116,17 @@ export async function POST(request: Request, context: RouteContext) {
 
     return NextResponse.json({
       clusters,
-      source: getGmsConfig().provider,
+      source: provider,
       model,
     } satisfies OpinionClusteringResult);
   } catch (error) {
     // 업스트림 오류 본문에는 게이트웨이 내부 정보가 섞일 수 있어 서버 로그에만 남긴다.
-    console.error('[opinion-clusters] GMS clustering failed:', error);
+    console.error('[opinion-clusters] clustering failed:', error);
 
-    return fallbackResponse(payload, 'GMS 요약 검증에 실패해 로컬 규칙 기반 요약을 사용했습니다.');
+    return failureResponse(
+      502,
+      'clustering_failed',
+      `${model} 의견 요약에 실패했습니다. 잠시 후 다시 시도해 주세요.`,
+    );
   }
 }

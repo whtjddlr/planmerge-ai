@@ -19,6 +19,7 @@ import type { DecisionVote, ParticipationState, ParticipationStateScope } from '
 import {
   createOpinionClusteringPayload,
   generateOpinionClusters,
+  OpinionClusteringError,
   loadOpinionClusterState,
   saveOpinionClusterState,
 } from '../lib/ai/opinionClustering';
@@ -321,11 +322,13 @@ function OpinionPanel({
 
 function OpinionClusterPanel({
   clusterResult,
+  clusterError,
   loading,
   opinionCount,
   onGenerate,
 }: {
   clusterResult?: OpinionClusteringResult;
+  clusterError?: string;
   loading: boolean;
   opinionCount: number;
   onGenerate: () => void;
@@ -336,7 +339,7 @@ function OpinionClusterPanel({
         <div>
           <div className="text-xs text-gray-500">AI 의견 요약</div>
           <div className="mt-1 text-xs text-gray-400">
-            GMS GPT-4.1 기준 · {opinionCount}개 의견
+            {clusterResult ? `${clusterResult.model} · ` : ''}{opinionCount}개 의견
           </div>
         </div>
         <button
@@ -352,6 +355,12 @@ function OpinionClusterPanel({
           {loading ? '요약 중' : clusterResult ? '다시 요약' : '요약 생성'}
         </button>
       </div>
+
+      {clusterError && (
+        <div className="mb-3 rounded-md bg-red-50 px-3 py-2 text-xs leading-relaxed text-red-800">
+          {clusterError}
+        </div>
+      )}
 
       {clusterResult?.warning && (
         <div className="mb-3 rounded-md bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
@@ -631,6 +640,8 @@ export function DecisionPanel({
   const [clusterResults, setClusterResults] = useState(() =>
     loadOpinionClusterState(analysisRunId, clusterStorageScope));
   const [clusterLoadingByBlock, setClusterLoadingByBlock] = useState<Record<string, boolean>>({});
+  // 요약 실패는 이전 요약 결과를 지우지 않고 별도로 표시한다.
+  const [clusterErrorByBlock, setClusterErrorByBlock] = useState<Record<string, string>>({});
   const [draftOpinions, setDraftOpinions] = useState<Record<string, string>>({});
   const [decisionResolutionStates, setDecisionResolutionStates] =
     useState<Record<string, DecisionResolutionRequestState>>({});
@@ -925,11 +936,33 @@ export function DecisionPanel({
       [trace.decisionBlockId]: true,
     }));
 
-    const payload = createOpinionClusteringPayload(trace, decisionOpinions, 'gpt-4.1');
-    const [result] = await Promise.all([
-      generateOpinionClusters(payload),
-      waitForLoadingTime(700),
-    ]);
+    setClusterErrorByBlock((current) => {
+      const next = { ...current };
+      delete next[trace.decisionBlockId];
+      return next;
+    });
+
+    const payload = createOpinionClusteringPayload(trace, decisionOpinions, projectSettings?.documentType ?? 'service_plan');
+    let result;
+
+    try {
+      [result] = await Promise.all([
+        generateOpinionClusters(payload),
+        waitForLoadingTime(700),
+      ]);
+    } catch (error) {
+      setClusterErrorByBlock((current) => ({
+        ...current,
+        [trace.decisionBlockId]: error instanceof OpinionClusteringError
+          ? error.message
+          : '의견 요약 중 알 수 없는 오류가 발생했습니다.',
+      }));
+      setClusterLoadingByBlock((current) => ({
+        ...current,
+        [trace.decisionBlockId]: false,
+      }));
+      return;
+    }
 
     setClusterResults((current) => ({
       ...current,
@@ -1105,6 +1138,7 @@ export function DecisionPanel({
 
         <OpinionClusterPanel
           clusterResult={decisionClusterResult}
+          clusterError={clusterErrorByBlock[trace.decisionBlockId]}
           loading={clusterLoadingByBlock[trace.decisionBlockId] ?? false}
           opinionCount={decisionOpinions.length}
           onGenerate={handleClusterGenerate}

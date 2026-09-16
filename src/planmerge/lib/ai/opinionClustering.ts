@@ -1,5 +1,14 @@
 import type { AnonymousOpinion, DecisionTrace } from '../../data/mergeResult';
 import { buildVoteOptions } from '../decisionParticipation';
+import { analysisAuthHeaders, loadAnalysisCredentials } from '../analysisKeyStore';
+import type { ProjectSettings } from '../localWorkspace';
+
+const documentTypes = new Set<ProjectSettings['documentType']>([
+  'service_plan',
+  'prd',
+  'business_plan',
+  'feature_spec',
+]);
 
 export type OpinionClusterCategory =
   | 'scope'
@@ -37,9 +46,10 @@ export type OpinionCluster = {
 };
 
 export type OpinionClusteringPayload = {
-  provider: 'gms';
-  model: string;
-  documentType: 'service_plan';
+  // provider/model은 담지 않는다. 클라이언트가 선언한 제공자는 검증할 수 없고,
+  // 페이로드가 그대로 프롬프트에 직렬화되므로 실제와 다르면 모델에게 거짓을 말하게 된다.
+  // 실제 제공자와 모델은 서버가 응답의 source/model로 돌려준다.
+  documentType: ProjectSettings['documentType'];
   decisionBlock: {
     id: string;
     sectionTitle: string;
@@ -59,7 +69,7 @@ export type OpinionClusteringPayload = {
 
 export type OpinionClusteringResult = {
   clusters: OpinionCluster[];
-  source: 'openai' | 'gms' | 'gemini' | 'solar' | 'local_fallback';
+  source: 'openai' | 'gms' | 'gemini' | 'solar' | 'empty';
   model: string;
   warning?: string;
 };
@@ -114,7 +124,6 @@ const payloadOptionTypes = new Set<Exclude<RelatedOptionType, null>>([
   'alternative',
   'conflict',
 ]);
-const DEFAULT_OPINION_MODEL = 'gpt-4.1';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -157,38 +166,6 @@ function readString(
   return trimmedValue;
 }
 
-const CATEGORY_KEYWORDS: Array<{
-  category: OpinionClusterCategory;
-  title: string;
-  keywords: string[];
-}> = [
-  {
-    category: 'integration',
-    title: '외부 연동 범위 조정',
-    keywords: ['notion', '노션', 'slack', '슬랙', '연동', '공유', '내보내기'],
-  },
-  {
-    category: 'risk',
-    title: '범위 확대와 개발 리스크',
-    keywords: ['리스크', '부담', '범위', '커진다', '확장', '복잡', '후순위', '나중'],
-  },
-  {
-    category: 'technical_feasibility',
-    title: '구현 가능성과 기술 검증',
-    keywords: ['개발', '구현', '기술', '가능', '정확도', '검증'],
-  },
-  {
-    category: 'scope',
-    title: 'MVP 핵심 범위 유지',
-    keywords: ['mvp', '초기', '핵심', '먼저', '우선', '출처', '근거', '신뢰'],
-  },
-  {
-    category: 'open_question',
-    title: '추가 논의 필요',
-    keywords: ['질문', '논의', '확인', '미정', '검토'],
-  },
-];
-
 const OPINION_CLUSTER_STORAGE_KEY = 'planmerge_opinion_clusters_v1';
 
 export type OpinionClusterStateScope = `local:${string}` | `shared:${string}`;
@@ -208,7 +185,7 @@ export function createEmptyOpinionClusterState(analysisRunId: number): OpinionCl
 export function createOpinionClusteringPayload(
   trace: DecisionTrace,
   opinions: AnonymousOpinion[],
-  model = DEFAULT_OPINION_MODEL,
+  documentType: ProjectSettings['documentType'],
 ): OpinionClusteringPayload {
   const voteOptions = buildVoteOptions(trace).map((option) => ({
     id: option.id,
@@ -217,9 +194,7 @@ export function createOpinionClusteringPayload(
   }));
 
   return {
-    provider: 'gms',
-    model,
-    documentType: 'service_plan',
+    documentType,
     decisionBlock: {
       id: trace.decisionBlockId,
       sectionTitle: trace.sectionTitle,
@@ -289,8 +264,6 @@ export function parseOpinionClusteringPayload(input: unknown): OpinionPayloadPar
     };
   }
 
-  const provider = readString(input, 'provider', errors, { required: true, maxLength: 40, fallback: 'gms' });
-  const model = readString(input, 'model', errors, { required: true, maxLength: 80, fallback: DEFAULT_OPINION_MODEL });
   const documentType = readString(input, 'documentType', errors, {
     required: true,
     maxLength: 60,
@@ -299,14 +272,8 @@ export function parseOpinionClusteringPayload(input: unknown): OpinionPayloadPar
   const decisionBlockInput = input.decisionBlock;
   const opinionsInput = input.opinions;
 
-  if (provider !== 'gms') {
-    errors.push('provider must be gms');
-  }
-  if (!model) {
-    errors.push('model must not be empty');
-  }
-  if (documentType !== 'service_plan') {
-    errors.push('documentType must be service_plan');
+  if (!documentTypes.has(documentType as ProjectSettings['documentType'])) {
+    errors.push('documentType must be a known document type');
   }
   if (!isRecord(decisionBlockInput)) {
     errors.push('decisionBlock must be an object');
@@ -413,9 +380,7 @@ export function parseOpinionClusteringPayload(input: unknown): OpinionPayloadPar
   return {
     valid: true,
     payload: {
-      provider: 'gms',
-      model: model || DEFAULT_OPINION_MODEL,
-      documentType: 'service_plan',
+      documentType: documentType as ProjectSettings['documentType'],
       decisionBlock: {
         id: decisionBlockId,
         sectionTitle,
@@ -493,36 +458,81 @@ export function validateOpinionClusters(payload: OpinionClusteringPayload, clust
   };
 }
 
+/**
+ * 의견 요약은 성공하거나 실패한다. 규칙 기반 묶음을 성공처럼 돌려주면 사용자가
+ * 모델이 읽고 묶은 결과로 오해하므로, 실패는 그대로 던진다.
+ */
+export class OpinionClusteringError extends Error {
+  readonly retryable: boolean;
+
+  constructor(message: string, retryable: boolean) {
+    super(message);
+    this.name = 'OpinionClusteringError';
+    this.retryable = retryable;
+  }
+}
+
 export async function generateOpinionClusters(payload: OpinionClusteringPayload): Promise<OpinionClusteringResult> {
-  try {
+  {
     const response = await fetch(`/api/decision-blocks/${payload.decisionBlock.id}/opinion-clusters`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...analysisAuthHeaders(loadAnalysisCredentials()),
       },
       body: JSON.stringify(payload),
+    }).catch(() => {
+      throw new OpinionClusteringError('의견 요약 서버에 연결하지 못했습니다.', true);
     });
 
     if (!response.ok) {
-      throw new Error(`opinion clustering api failed: ${response.status}`);
+      throw new OpinionClusteringError(
+        await readClusteringError(response),
+        response.status !== 503,
+      );
     }
 
-    const result = await response.json() as OpinionClusteringResult;
+    let result: OpinionClusteringResult;
+
+    try {
+      result = await response.json() as OpinionClusteringResult;
+    } catch {
+      throw new OpinionClusteringError('의견 요약 응답이 올바른 JSON 형식이 아닙니다.', true);
+    }
+
     const validation = validateOpinionClusters(payload, result.clusters);
 
     if (!validation.valid) {
-      throw new Error(validation.errors.join(', '));
+      // 존재하지 않는 의견 ID를 가리키는 묶음은 화면에 올리지 않는다.
+      throw new OpinionClusteringError('의견 요약이 출처 검증을 통과하지 못했습니다.', true);
     }
 
     return result;
-  } catch {
-    return {
-      clusters: createLocalFallbackClusters(payload),
-      source: 'local_fallback',
-      model: 'local-rules',
-      warning: 'API가 연결되지 않아 로컬 규칙 기반 요약을 사용했습니다.',
-    };
   }
+}
+
+async function readClusteringError(response: Response) {
+  const text = await response.text().catch(() => '');
+
+  try {
+    const parsed: unknown = JSON.parse(text);
+
+    if (
+      typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) &&
+      Array.isArray((parsed as Record<string, unknown>).errors)
+    ) {
+      const errors = ((parsed as Record<string, unknown>).errors as unknown[])
+        .filter((error): error is string => typeof error === 'string' && error.trim().length > 0);
+
+      if (errors.length) {
+        return errors.join('; ');
+      }
+    }
+  } catch {
+    // 본문이 JSON이 아니면 상태 코드만 알린다.
+  }
+
+  return `의견 요약에 실패했습니다. 서버 응답 상태: ${response.status}`;
 }
 
 export function loadOpinionClusterState(
@@ -588,113 +598,4 @@ export function saveOpinionClusterState(
 
 function opinionClusterStorageKey(scope: OpinionClusterStateScope) {
   return `${OPINION_CLUSTER_STORAGE_KEY}:${scope}`;
-}
-
-export function createLocalFallbackClusters(payload: OpinionClusteringPayload): OpinionCluster[] {
-  const clustersByCategory = new Map<OpinionClusterCategory, {
-    title: string;
-    opinionIds: string[];
-    contents: string[];
-  }>();
-
-  payload.opinions.forEach((opinion) => {
-    const lowerContent = opinion.content.toLowerCase();
-    const matchedCategory = CATEGORY_KEYWORDS.find((category) =>
-      category.keywords.some((keyword) => lowerContent.includes(keyword.toLowerCase())),
-    ) ?? {
-      category: 'other' as const,
-      title: '기타 검토 의견',
-      keywords: [],
-    };
-
-    const current = clustersByCategory.get(matchedCategory.category) ?? {
-      title: matchedCategory.title,
-      opinionIds: [],
-      contents: [],
-    };
-
-    current.opinionIds.push(opinion.id);
-    current.contents.push(opinion.content);
-    clustersByCategory.set(matchedCategory.category, current);
-  });
-
-  return Array.from(clustersByCategory.entries()).map(([category, cluster], index) => {
-    const relatedOption = inferRelatedOption(payload, category, cluster.contents.join(' '));
-
-    return {
-      id: `local_cluster_${index + 1}`,
-      title: cluster.title,
-      summary: summarizeFallbackCluster(category, cluster.contents.length),
-      category,
-      stance: inferStance(category),
-      relatedOptionType: relatedOption.type,
-      relatedOptionText: relatedOption.text,
-      impact: inferImpact(category, cluster.contents.length),
-      opinionIds: cluster.opinionIds,
-      reasoning: `${cluster.opinionIds.length}개 의견이 유사한 키워드와 판단 방향을 공유합니다.`,
-    };
-  });
-}
-
-function inferRelatedOption(payload: OpinionClusteringPayload, category: OpinionClusterCategory, content: string) {
-  const selectedOption = payload.decisionBlock.options.find((option) => option.type === 'selected');
-  const lowerContent = content.toLowerCase();
-  const matchedOption = payload.decisionBlock.options.find((option) => {
-    if (option.type === 'selected') return false;
-    return option.text
-      .split(/\s+/)
-      .some((word) => word.length > 1 && lowerContent.includes(word.toLowerCase()));
-  });
-
-  if (matchedOption) {
-    return {
-      type: matchedOption.type,
-      text: matchedOption.text,
-    };
-  }
-
-  if (category === 'scope' || category === 'risk' || category === 'technical_feasibility') {
-    return {
-      type: selectedOption?.type ?? null,
-      text: selectedOption?.text ?? null,
-    };
-  }
-
-  return {
-    type: null,
-    text: null,
-  };
-}
-
-function inferStance(category: OpinionClusterCategory): OpinionClusterStance {
-  if (category === 'scope' || category === 'technical_feasibility') return 'supports_selected';
-  if (category === 'integration') return 'supports_alternative';
-  if (category === 'risk') return 'raises_concern';
-  if (category === 'open_question') return 'proposes_change';
-  return 'neutral';
-}
-
-function inferImpact(category: OpinionClusterCategory, count: number): OpinionClusterImpact {
-  if (category === 'risk' || count >= 3) return 'high';
-  if (category === 'scope' || category === 'integration' || count === 2) return 'medium';
-  return 'low';
-}
-
-function summarizeFallbackCluster(category: OpinionClusterCategory, count: number) {
-  const prefix = `${count}개 의견은`;
-
-  switch (category) {
-    case 'integration':
-      return `${prefix} 외부 도구 연동을 MVP 범위에 포함할지 별도로 판단해야 한다고 봅니다.`;
-    case 'risk':
-      return `${prefix} MVP 범위 확대와 개발 부담을 주요 리스크로 보고 있습니다.`;
-    case 'technical_feasibility':
-      return `${prefix} 구현 가능성과 검증 정확도를 우선 확인해야 한다고 봅니다.`;
-    case 'scope':
-      return `${prefix} 선택 근거와 출처 추적 같은 핵심 검증 범위를 먼저 유지해야 한다고 봅니다.`;
-    case 'open_question':
-      return `${prefix} 추가 논의나 확인이 필요한 항목을 제기합니다.`;
-    default:
-      return `${prefix} 별도 검토가 필요한 의견입니다.`;
-  }
 }

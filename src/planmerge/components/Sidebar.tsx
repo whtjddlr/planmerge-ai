@@ -209,7 +209,7 @@ function getWorkspaceTitle(workspace: LocalWorkspaceMetadata | undefined) {
   }
 
   if (workspace.id === SAMPLE_WORKSPACE_ID) {
-    return '검증 샘플';
+    return '예시 초안';
   }
 
   return workspace.title.trim() || '새 워크스페이스';

@@ -33,7 +33,7 @@
     ]
   },
   "before": {
-    "protocolVersion": "0.1",
+    "protocolVersion": "0.2",
     "source": "local_harness",
     "normalizedIdeas": [
       {
@@ -46,7 +46,12 @@
         "ideaType": "feature",
         "normalizedText": "타깃은 첫 시청자다. 핵심 기능: 출연자 소개 영상은 세로 30초로 제작한다. 기존 예고편 소재만 사용한다. MVP 범위는 인물 2명 소개와 관계 질문 하나다.",
         "intent": "propose",
-        "confidence": 0.72
+        "confidence": 0.72,
+        "forbiddenDirectionConflict": {
+          "conflicts": false,
+          "reason": "하네스 키워드 규칙에서 금지 방향과 겹치는 표현을 찾지 못했습니다. 의미 기반 판정이 아니므로 사람 검토가 필요합니다.",
+          "evidence": ""
+        }
       },
       {
         "id": "idea_2",
@@ -58,7 +63,12 @@
         "ideaType": "feature",
         "normalizedText": "타깃은 기존 팬이다. 핵심 기능: 출연자 소개 영상은 가로 3분으로 제작한다. 신규 인터뷰를 촬영한다. MVP 범위에 결말 스포일러를 포함한다.",
         "intent": "propose",
-        "confidence": 0.72
+        "confidence": 0.72,
+        "forbiddenDirectionConflict": {
+          "conflicts": false,
+          "reason": "하네스 키워드 규칙에서 금지 방향과 겹치는 표현을 찾지 못했습니다. 의미 기반 판정이 아니므로 사람 검토가 필요합니다.",
+          "evidence": ""
+        }
       }
     ],
     "decisionBlocks": [
@@ -120,7 +130,7 @@
     ]
   },
   "after": {
-    "protocolVersion": "0.1",
+    "protocolVersion": "0.2",
     "source": "local_harness",
     "normalizedIdeas": [
       {
@@ -133,7 +143,12 @@
         "ideaType": "feature",
         "normalizedText": "타깃은 첫 시청자다. 핵심 기능: 출연자 소개 영상은 세로 30초로 제작한다. 기존 예고편 소재만 사용한다. MVP 범위는 인물 2명 소개와 관계 질문 하나다.",
         "intent": "propose",
-        "confidence": 0.72
+        "confidence": 0.72,
+        "forbiddenDirectionConflict": {
+          "conflicts": false,
+          "reason": "하네스 키워드 규칙에서 금지 방향과 겹치는 표현을 찾지 못했습니다. 의미 기반 판정이 아니므로 사람 검토가 필요합니다.",
+          "evidence": ""
+        }
       },
       {
         "id": "idea_2",
@@ -145,7 +160,12 @@
         "ideaType": "feature",
         "normalizedText": "타깃은 기존 팬이다. 핵심 기능: 출연자 소개 영상은 가로 3분으로 제작한다. 신규 인터뷰를 촬영한다. MVP 범위에 결말 스포일러를 포함한다.",
         "intent": "propose",
-        "confidence": 0.72
+        "confidence": 0.72,
+        "forbiddenDirectionConflict": {
+          "conflicts": false,
+          "reason": "하네스 키워드 규칙에서 금지 방향과 겹치는 표현을 찾지 못했습니다. 의미 기반 판정이 아니므로 사람 검토가 필요합니다.",
+          "evidence": ""
+        }
       }
     ],
     "decisionBlocks": [

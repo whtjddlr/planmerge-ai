@@ -1,6 +1,7 @@
 import type { AnonymousOpinion } from '../../data/mergeResult';
 import type { DecisionVote } from '../decisionParticipation';
 import type { LocalDraftSubmission, ProjectSettings } from '../localWorkspace';
+import { analysisAuthHeaders, loadAnalysisCredentials } from '../analysisKeyStore';
 import {
   conflictsWithForbiddenDirection,
   parsePlanMergeAnalysisPayload,
@@ -306,7 +307,7 @@ export function buildDecisionResolutionPrompt(payload: DecisionResolutionPayload
   }));
 
   return [
-    'You are executing PlanMerge Decision Resolution Protocol v0.1 with GPT-5.6.',
+    'You are executing PlanMerge Decision Resolution Protocol v0.1.',
     '',
     'Goal: produce one evidence-grounded consensus patch for exactly one planning Decision Block, or ask one decisive question when the evidence is insufficient.',
     '',
@@ -488,7 +489,7 @@ export function validateDecisionResolutionProposal(
 
       return option?.sourceIdeaIds.some((ideaId) => {
         const idea = ideasById.get(ideaId);
-        return idea ? conflictsWithForbiddenDirection(payload.project.forbiddenDirection, idea) : true;
+        return idea ? conflictsWithForbiddenDirection(idea) : true;
       });
     });
 
@@ -645,7 +646,10 @@ export async function requestDecisionResolution(payload: DecisionResolutionPaylo
     `/api/decision-blocks/${encodeURIComponent(payload.decisionBlockId)}/resolution`,
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...analysisAuthHeaders(loadAnalysisCredentials()),
+      },
       body: JSON.stringify(payload),
     },
   );

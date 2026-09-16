@@ -11,7 +11,7 @@
 
 - 입력: Decision Block(주제, 선택안, 옵션 최대 20개) + 익명 의견 최대 100개(`id`, `content`).
 - 출력: `clusters` 배열 — 각각 `title`/`summary`/`reasoning`(한국어), `category`, `stance`, `relatedOptionType`, `relatedOptionText`, `impact`, `opinionIds`.
-- 너의 출력은 `validateOpinionClusters`를 통과해야 하며, 실패하면 규칙 기반 로컬 폴백 클러스터로 대체된다.
+- 너의 출력은 `validateOpinionClusters`를 통과해야 한다. 실패하면 규칙 기반 클러스터로 대체되는 것이 아니라 요청이 `502`로 실패하고 사용자는 오류를 본다.
 
 ## 1. 규칙
 

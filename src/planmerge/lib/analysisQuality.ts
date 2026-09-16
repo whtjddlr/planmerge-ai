@@ -163,7 +163,7 @@ export function evaluateAnalysisQuality(
       'Section Coverage',
       finalSectionKeys.size,
       sectionKeys.length,
-      '기본 기획서 12개 섹션 중 최종 문서가 채운 비율입니다.',
+      `기본 기획서 ${sectionKeys.length}개 섹션 중 최종 문서가 채운 비율입니다.`,
     ),
     metric(
       'source_coverage',

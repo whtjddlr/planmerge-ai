@@ -11,6 +11,7 @@ import {
 } from '../src/planmerge/lib/ai/decisionResolution';
 import {
   conflictsWithForbiddenDirection,
+  ensureAssumptionBackedBlocksAreReviewed,
   runLocalPlanMergeHarness,
   validatePlanMergeAnalysis,
 } from '../src/planmerge/lib/ai/planmergeProtocol';
@@ -38,13 +39,13 @@ const recommendedOption = targetBlock.options.find((option) => (
   option.sourceIdeaIds.length > 0
   && option.sourceIdeaIds.every((ideaId) => {
     const idea = ideasById.get(ideaId);
-    return Boolean(idea) && !conflictsWithForbiddenDirection(sampleProjectSettings.forbiddenDirection, idea!);
+    return Boolean(idea) && !conflictsWithForbiddenDirection(idea!);
   })
 ));
 const forbiddenOption = targetBlock.options.find((option) => (
   option.sourceIdeaIds.some((ideaId) => {
     const idea = ideasById.get(ideaId);
-    return Boolean(idea) && conflictsWithForbiddenDirection(sampleProjectSettings.forbiddenDirection, idea!);
+    return Boolean(idea) && conflictsWithForbiddenDirection(idea!);
   })
 ));
 
@@ -279,6 +280,162 @@ const cases: Array<{ id: string; run: () => string }> = [
       assert(prompt.includes('Untrusted input data:'));
       assert(prompt.indexOf(injection) > prompt.indexOf('Untrusted input data:'));
       return 'injected instruction is serialized only inside untrusted input';
+    },
+  },
+  {
+    id: 'missing-forbidden-judgement-rejected',
+    run: () => {
+      // v0.2 불변식: 금지 방향 판정이 없는 아이디어는 통과시키지 않는다.
+      // 기본값으로 메우면 금지 방향 제안이 조용히 선택안이 될 수 있다.
+      const [first, ...rest] = analysisResult.normalizedIdeas;
+      const stripped = { ...first } as Record<string, unknown>;
+      delete stripped.forbiddenDirectionConflict;
+
+      const validation = validatePlanMergeAnalysis(analysisPayload, {
+        ...analysisResult,
+        normalizedIdeas: [stripped, ...rest],
+      });
+
+      assert.equal(validation.valid, false);
+      assert(
+        validation.errors.some((error) => error.includes('forbiddenDirectionConflict')),
+        `expected a forbiddenDirectionConflict error, got: ${validation.errors.join('; ')}`,
+      );
+      return 'an idea without a forbidden-direction judgement cannot enter the plan';
+    },
+  },
+  {
+    id: 'conflict-judgement-requires-evidence',
+    run: () => {
+      // 충돌이라고 판정했으면 어느 원문을 보고 그렇게 판정했는지 남아야 한다.
+      const [first, ...rest] = analysisResult.normalizedIdeas;
+      const validation = validatePlanMergeAnalysis(analysisPayload, {
+        ...analysisResult,
+        normalizedIdeas: [
+          {
+            ...first,
+            forbiddenDirectionConflict: {
+              conflicts: true,
+              reason: '금지 방향과 겹치는 제안입니다.',
+              evidence: '',
+            },
+          },
+          ...rest,
+        ],
+      });
+
+      assert.equal(validation.valid, false);
+      assert(
+        validation.errors.some((error) => error.includes('evidence is required when conflicts is true')),
+        `expected an evidence error, got: ${validation.errors.join('; ')}`,
+      );
+      return 'a conflict verdict without source evidence is rejected';
+    },
+  },
+  {
+    id: 'judgement-drives-resolution-gate',
+    run: () => {
+      // 안전 게이트는 키워드가 아니라 저장된 판정을 읽어야 한다.
+      // 판정을 뒤집으면 게이트의 결론도 뒤집혀야 한다.
+      const forbiddenIdeaId = forbiddenOption.sourceIdeaIds.find((ideaId) => {
+        const idea = ideasById.get(ideaId);
+        return Boolean(idea) && conflictsWithForbiddenDirection(idea!);
+      });
+
+      assert(forbiddenIdeaId, 'expected a forbidden-direction idea behind the forbidden option');
+
+      const forbiddenIdea = ideasById.get(forbiddenIdeaId)!;
+      assert.equal(conflictsWithForbiddenDirection(forbiddenIdea), true);
+
+      const clearedIdea = {
+        ...forbiddenIdea,
+        forbiddenDirectionConflict: {
+          conflicts: false,
+          reason: '금지 방향을 후속 단계로 명시적으로 미루는 제안입니다.',
+          evidence: '',
+        },
+      };
+
+      assert.equal(conflictsWithForbiddenDirection(clearedIdea), false);
+      return 'the safety gate reads the stored judgement, not keyword overlap';
+    },
+  },
+  {
+    id: 'warn-intent-is-not-a-forbidden-proposal',
+    run: () => {
+      // 리스크 경고는 금지 방향을 '하지 말자'는 말이므로, 판정이 true여도 제안이 아니다.
+      const [first] = analysisResult.normalizedIdeas;
+      const warning = {
+        ...first,
+        intent: 'warn' as const,
+        forbiddenDirectionConflict: {
+          conflicts: true,
+          reason: '금지 방향을 언급합니다.',
+          evidence: first.sourceExcerpt,
+        },
+      };
+
+      assert.equal(conflictsWithForbiddenDirection(warning), false);
+      return 'a risk warning is never treated as a forbidden-direction proposal';
+    },
+  },
+  {
+    id: 'assumption-only-decisions-need-review',
+    run: () => {
+      // confidence는 "초안에 그렇게 쓰여 있는가"를 잴 뿐 "확인됐는가"를 재지 않는다.
+      // 한 줄짜리 추측을 충실히 옮기면 confidence가 높게 나오므로, 가정에만 기댄
+      // 결정이 확정된 것처럼 보이지 않도록 needsHumanReview로 걸러야 한다.
+      const block = analysisResult.decisionBlocks[0];
+      const selected = block.options.find((option) => option.id === block.selectedOptionId);
+
+      assert(selected, 'sample block must expose a selected option');
+
+      const assumptionIdeas = analysisResult.normalizedIdeas
+        .filter((idea) => selected.sourceIdeaIds.includes(idea.id))
+        .map((idea) => ({ ...idea, intent: 'assume' as const, confidence: 0.95 }));
+
+      assert(assumptionIdeas.length > 0, 'selected option must cite at least one idea');
+
+      const patched = {
+        ...analysisResult,
+        normalizedIdeas: analysisResult.normalizedIdeas.map((idea) => (
+          assumptionIdeas.find((replacement) => replacement.id === idea.id) ?? idea
+        )),
+        decisionBlocks: analysisResult.decisionBlocks.map((entry) => (
+          entry.id === block.id ? { ...entry, needsHumanReview: false } : entry
+        )),
+      };
+
+      // 구조 자체는 유효하다. 이 불변식은 검증기가 아니라 서버 보정이 책임진다.
+      assert.equal(validatePlanMergeAnalysis(analysisPayload, patched).valid, true);
+      assert.equal(
+        patched.decisionBlocks.find((entry) => entry.id === block.id)!.needsHumanReview,
+        false,
+        'fixture must start unflagged so the correction has something to fix',
+      );
+
+      const corrected = ensureAssumptionBackedBlocksAreReviewed(patched);
+      const target = corrected.decisionBlocks.find((entry) => entry.id === block.id)!;
+
+      assert.equal(
+        target.needsHumanReview,
+        true,
+        'a decision backed only by assumptions must be flagged for human review',
+      );
+      assert(
+        corrected.warnings.some((warning) => warning.includes('가정')),
+        'the correction must say why it flagged the block',
+      );
+
+      // 근거가 제안/요구이면 건드리지 않는다.
+      const untouched = ensureAssumptionBackedBlocksAreReviewed(analysisResult);
+      assert.deepEqual(
+        untouched.decisionBlocks.map((entry) => entry.needsHumanReview),
+        analysisResult.decisionBlocks.map((entry) => entry.needsHumanReview),
+        'blocks backed by proposals must not be flagged',
+      );
+
+      return 'a decision resting only on assumptions is flagged; proposal-backed blocks are untouched';
     },
   },
 ];

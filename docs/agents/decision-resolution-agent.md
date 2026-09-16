@@ -6,7 +6,7 @@ Turn one unresolved PlanMerge Decision Block into a grounded proposal that a per
 
 This agent is an **analyst and patch author**, not an approver. It may identify the smallest missing decision, recommend a source-backed option when the supplied criteria are decisive, and draft a patch for the affected final-document section. It may never apply its own output or claim that the team agreed.
 
-**Build Week model route:** `DECISION_MODEL` (default `gpt-5.6`). `GMS_DECISION_MODEL` is a compatibility fallback when the provider-neutral variable is unset.
+**Model route:** `DECISION_MODEL` (default `gpt-5.6-luna`). `OPENAI_DECISION_MODEL` and `GMS_DECISION_MODEL` are compatibility aliases read only when the provider-neutral variable is unset.
 
 **Server entry point:** `POST /api/decision-blocks/:decisionBlockId/resolution`
 
@@ -32,7 +32,7 @@ The model returns the proposal payload only. The server validates that payload a
 ```ts
 type DecisionResolutionResult = {
   proposal: DecisionResolutionProposal;
-  source: 'gms' | 'openai' | 'local_fallback';
+  source: 'gms' | 'openai';
   model: string;
   responseId?: string;
   generatedAt: string;
@@ -115,13 +115,13 @@ Runtime identity is an API concern, not a self-reported model claim.
 - `responseId` is included only if the upstream response supplied one.
 - `generatedAt` is recorded by the server.
 - The completed-result/evidence panel may attribute a response to “GPT-5.6” only when the returned evidence supports that exact model. A pre-request action label may describe the configured target model, but it is not execution proof.
-- A missing key, request failure, invalid payload, unknown ID, or out-of-scope patch degrades to `source: "local_fallback"`.
-- Every `local_fallback` result has `applicable: false` and an explicit warning.
+- A missing credential returns `503`. A request failure, invalid payload, unknown ID, or out-of-scope patch returns `502`.
+- No rule-based substitute is returned in place of a model result.
 
 Required invariant:
 
 ```text
-source === 'local_fallback'  =>  applicable === false
+no validated model response  =>  502 / 503, never a rule-based result
 ```
 
 Fallback content may help explain what input is missing, but it cannot be accepted as an AI-backed section resolution.

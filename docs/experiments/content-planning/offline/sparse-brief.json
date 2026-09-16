@@ -23,7 +23,7 @@
     ]
   },
   "before": {
-    "protocolVersion": "0.1",
+    "protocolVersion": "0.2",
     "source": "local_harness",
     "normalizedIdeas": [
       {
@@ -36,7 +36,12 @@
         "ideaType": "requirement",
         "normalizedText": "출연자 사이의 어색한 첫 만남을 짧은 영상으로 소개하고 싶다.",
         "intent": "propose",
-        "confidence": 0.58
+        "confidence": 0.58,
+        "forbiddenDirectionConflict": {
+          "conflicts": false,
+          "reason": "하네스 키워드 규칙에서 금지 방향과 겹치는 표현을 찾지 못했습니다. 의미 기반 판정이 아니므로 사람 검토가 필요합니다.",
+          "evidence": ""
+        }
       }
     ],
     "decisionBlocks": [
@@ -89,7 +94,7 @@
     ]
   },
   "after": {
-    "protocolVersion": "0.1",
+    "protocolVersion": "0.2",
     "source": "local_harness",
     "normalizedIdeas": [
       {
@@ -102,7 +107,12 @@
         "ideaType": "requirement",
         "normalizedText": "출연자 사이의 어색한 첫 만남을 짧은 영상으로 소개하고 싶다.",
         "intent": "propose",
-        "confidence": 0.58
+        "confidence": 0.58,
+        "forbiddenDirectionConflict": {
+          "conflicts": false,
+          "reason": "하네스 키워드 규칙에서 금지 방향과 겹치는 표현을 찾지 못했습니다. 의미 기반 판정이 아니므로 사람 검토가 필요합니다.",
+          "evidence": ""
+        }
       }
     ],
     "decisionBlocks": [

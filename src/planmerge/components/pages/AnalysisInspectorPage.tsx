@@ -377,7 +377,7 @@ function QualityGateTab({
       <section className="rounded-md border border-gray-200 p-4">
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-sm text-gray-900">Section Coverage</h3>
-          <span className="text-xs text-gray-400">기본 12개 섹션</span>
+          <span className="text-xs text-gray-400">기본 {documentSectionDefinitions.length}개 섹션</span>
         </div>
         <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
           {qualityReport.sectionCoverage.map((section) => (

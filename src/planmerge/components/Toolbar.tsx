@@ -37,7 +37,7 @@ const viewCopy: Record<AppView, { title: string; subtitle: string; breadcrumb: s
   },
   merge: {
     title: '병합 결과',
-    subtitle: '3개의 AI 초안에서 42개의 아이디어를 추출했습니다',
+    subtitle: '초안별 아이디어를 병합하고 선택 근거를 확인합니다',
     breadcrumb: '프로젝트 / AI 공동 기획서 병합 도구',
   },
   inspector: {

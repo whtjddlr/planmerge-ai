@@ -4,12 +4,14 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "setup": "tsx scripts/setup-env.ts",
     "build": "next build",
     "postinstall": "prisma generate",
     "harness:local": "tsx scripts/run-planmerge-harness.ts",
     "harness:protocol": "tsx scripts/run-planmerge-quality-cases.ts",
     "harness:resolution": "tsx scripts/run-decision-resolution-cases.ts",
     "harness:quality": "tsx scripts/run-planmerge-quality-cases.ts && tsx scripts/run-decision-resolution-cases.ts",
+    "test:live": "tsx scripts/run-live-scenarios.ts",
     "start": "next start",
     "lint": "eslint",
     "test:e2e": "playwright test"

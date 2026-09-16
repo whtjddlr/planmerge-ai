@@ -1,6 +1,5 @@
 import {
   documentSectionDefinitions,
-  runLocalPlanMergeHarness,
   validatePlanMergeAnalysis,
 } from './ai/planmergeProtocol';
 import type { PlanMergeAnalysisResult } from './ai/planmergeProtocol';
@@ -254,12 +253,12 @@ export const sampleDrafts: LocalDraftSubmission[] = [
   },
 ];
 
-export const verifiedSampleSummary = {
+// 분석을 실행하기 전에는 충돌 수도 품질 점수도 알 수 없다. 여기에는 입력만 놓고,
+// 결과 지표는 실제 분석이 끝난 뒤 화면이 결과에서 직접 읽는다.
+export const sampleWorkspaceSummary = {
   title: sampleProjectSettings.title,
   draftCount: sampleDrafts.length,
   sectionCount: documentSectionDefinitions.length,
-  conflictCount: 1,
-  qualityScore: 100,
 } as const;
 
 export function createEmptyWorkspaceState(): LocalWorkspaceState {
@@ -273,29 +272,21 @@ export function createEmptyWorkspaceState(): LocalWorkspaceState {
 
 export const defaultWorkspaceState: LocalWorkspaceState = createEmptyWorkspaceState();
 
+/**
+ * 샘플 워크스페이스는 **입력만** 제공한다.
+ *
+ * 예전에는 로컬 하네스가 만든 병합 결과를 미리 붙여서 내보냈다. 그 결과는 키워드
+ * 규칙의 산물인데 실제 분석 결과와 같은 화면에 같은 모양으로 렌더링됐고, 사용자는
+ * 제품이 정해진 시나리오를 재생하는 것처럼 느꼈다. 이제 샘플을 열면 초안 13개가
+ * 준비된 분석 실행 전 상태가 되고, 결과는 실제 모델 호출로만 만들어진다.
+ */
 export function createSampleWorkspaceState(): LocalWorkspaceState {
-  const drafts = sampleDrafts.map((draft) => ({ ...draft }));
-
   return {
-    analysisRunId: 1,
+    analysisRunId: 0,
     project: sampleProjectSettings,
-    drafts,
-    analysisResult: runLocalPlanMergeHarness({
-      project: sampleProjectSettings,
-      drafts,
-    }),
+    drafts: sampleDrafts.map((draft) => ({ ...draft })),
     decisionLogs: [],
   };
-}
-
-export function isSampleWorkspaceState(state: LocalWorkspaceState) {
-  const sampleDraftIds = new Set(sampleDrafts.map((draft) => draft.id));
-
-  return (
-    state.project.title === sampleProjectSettings.title &&
-    state.drafts.length === sampleDrafts.length &&
-    state.drafts.every((draft) => sampleDraftIds.has(draft.id))
-  );
 }
 
 type WorkspaceExportFile = {

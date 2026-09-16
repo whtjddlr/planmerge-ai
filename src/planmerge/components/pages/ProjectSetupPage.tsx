@@ -1,10 +1,14 @@
 import { type FormEvent, useState } from 'react';
-import { verifiedSampleSummary, type ProjectSettings } from '../../lib/localWorkspace';
+import { sampleWorkspaceSummary, type ProjectSettings } from '../../lib/localWorkspace';
+import { AnalysisKeySetup, type AnalysisKeyStatus } from '../AnalysisKeySetup';
+import type { StoredAnalysisCredentials } from '../../lib/analysisKeyStore';
 
 type ProjectSetupPageProps = {
   project: ProjectSettings;
   onLoadSample: () => void;
   onSave: (project: ProjectSettings) => void;
+  analysisKeyStatus: AnalysisKeyStatus;
+  onAnalysisCredentialsChange: (credentials: StoredAnalysisCredentials | null) => void;
 };
 
 const PROJECT_FIELD_LIMITS = {
@@ -15,7 +19,13 @@ const PROJECT_FIELD_LIMITS = {
   outputStyle: 1000,
 } as const;
 
-export function ProjectSetupPage({ project, onLoadSample, onSave }: ProjectSetupPageProps) {
+export function ProjectSetupPage({
+  project,
+  onLoadSample,
+  onSave,
+  analysisKeyStatus,
+  onAnalysisCredentialsChange,
+}: ProjectSetupPageProps) {
   const [form, setForm] = useState(project);
   const [savedAt, setSavedAt] = useState<string | null>(null);
 
@@ -131,7 +141,7 @@ export function ProjectSetupPage({ project, onLoadSample, onSave }: ProjectSetup
                 className="rounded-md border border-gray-200 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
                 onClick={onLoadSample}
               >
-                샘플 워크스페이스 둘러보기
+                예시 초안 불러오기
               </button>
               {savedAt && <span className="text-xs text-gray-500">{savedAt} 저장됨</span>}
             </div>
@@ -139,24 +149,25 @@ export function ProjectSetupPage({ project, onLoadSample, onSave }: ProjectSetup
         </section>
 
         <aside className="space-y-4">
+          <AnalysisKeySetup
+            status={analysisKeyStatus}
+            onCredentialsChange={onAnalysisCredentialsChange}
+            variant="card"
+          />
+
           <section className="rounded-md border border-gray-200 bg-gray-50 p-5">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <div className="text-xs text-gray-500">검증 샘플</div>
-                <h3 className="mt-1 text-base text-gray-900">{verifiedSampleSummary.title}</h3>
-              </div>
-              <div className="rounded bg-emerald-50 px-2 py-1 text-xs text-emerald-700">Ready</div>
+            <div>
+              <div className="text-xs text-gray-500">예시 초안 묶음</div>
+              <h3 className="mt-1 text-base text-gray-900">{sampleWorkspaceSummary.title}</h3>
             </div>
             <p className="mt-3 text-sm leading-relaxed text-gray-600">
-              회의록 기반 B2B SaaS 기획서를 13개 역할별 초안으로 구성했습니다.
-              섹션 누락 없이 충돌 의견까지 확인할 수 있는 포폴용 기준 데이터입니다.
+              회의록 기반 B2B SaaS 기획서를 역할별 초안 {sampleWorkspaceSummary.draftCount}개로 구성했습니다.
+              불러오면 분석 실행 전 상태로 열리고, 병합 결과는 직접 분석을 실행해야 만들어집니다.
             </p>
 
             <div className="mt-5 grid grid-cols-2 gap-2">
-              <SampleMetric label="AI 초안" value={`${verifiedSampleSummary.draftCount}개`} />
-              <SampleMetric label="문서 섹션" value={`${verifiedSampleSummary.sectionCount}개`} />
-              <SampleMetric label="충돌 의견" value={`${verifiedSampleSummary.conflictCount}개`} />
-              <SampleMetric label="품질 점수" value={`${verifiedSampleSummary.qualityScore}`} />
+              <SampleMetric label="AI 초안" value={`${sampleWorkspaceSummary.draftCount}개`} />
+              <SampleMetric label="문서 섹션" value={`${sampleWorkspaceSummary.sectionCount}개`} />
             </div>
 
             <button
@@ -164,7 +175,7 @@ export function ProjectSetupPage({ project, onLoadSample, onSave }: ProjectSetup
               className="mt-5 w-full rounded-md bg-gray-900 px-4 py-2 text-sm text-white hover:bg-gray-800"
               onClick={onLoadSample}
             >
-              검증 샘플 바로 열기
+              예시 초안 불러오기
             </button>
           </section>
 
