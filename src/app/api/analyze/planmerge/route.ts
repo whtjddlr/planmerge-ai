@@ -8,6 +8,7 @@ import {
   documentSectionDefinitions,
   parsePlanMergeAnalysisPayload,
   ensureAssumptionBackedBlocksAreReviewed,
+  ensureServerOwnedSelectionSource,
   validateDraftNormalizeResult,
   validatePlanMergeAnalysis,
 } from '@/planmerge/lib/ai/planmergeProtocol';
@@ -167,7 +168,7 @@ function normalizeDraftProtocolResult(
   const ids = new Set<string>();
 
   return {
-    protocolVersion: '0.2',
+    protocolVersion: '0.3',
     source: result.source,
     warnings: Array.isArray(result.warnings) ? result.warnings : [],
     normalizedIdeas: (Array.isArray(result.normalizedIdeas) ? result.normalizedIdeas : [])
@@ -329,7 +330,9 @@ function postProcessMergeResult(
       ensureFinalDocumentCoverage(
         ensureDecisionBlockCoverage(
           payload,
+          ensureServerOwnedSelectionSource(
           ensureMergeUsesCanonicalIdeas(result, normalizedIdeas),
+        ),
         ),
       ),
     ),
@@ -453,6 +456,8 @@ function createServerDecisionBlock(
     topic: selectedIdea.topic,
     selectedOptionId: options.find((option) => option.optionType === 'selected')?.id ?? options[0].id,
     selectionReason: 'merge 응답이 이 아이디어를 Decision Block에 반영하지 않아, 서버가 검증된 출처 아이디어를 기준으로 보강했습니다.',
+    // 서버가 만든 블록이므로 출처도 서버가 기록한다.
+    selectionSource: 'merge',
     confidence: Math.min(Math.max(selectedIdea.confidence, 0.58), 0.82),
     conflictLevel,
     needsHumanReview: conflictLevel !== 'none' || selectedIdea.confidence < 0.65,

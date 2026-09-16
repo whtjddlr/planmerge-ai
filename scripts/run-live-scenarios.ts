@@ -58,8 +58,8 @@ function checkSharedInvariants(
     failures.push(`프로토콜 검증 실패: ${validation.errors.slice(0, 4).join('; ')}`);
   }
 
-  if (result.protocolVersion !== '0.2') {
-    failures.push(`protocolVersion이 0.2가 아니다: ${result.protocolVersion}`);
+  if (result.protocolVersion !== '0.3') {
+    failures.push(`protocolVersion이 0.3이 아니다: ${result.protocolVersion}`);
   }
 
   // 로컬 규칙 결과가 실제 분석인 척 돌아오면 안 된다.

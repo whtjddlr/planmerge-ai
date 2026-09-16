@@ -14,6 +14,8 @@ import {
 import {
   conflictsWithForbiddenDirection,
   ensureAssumptionBackedBlocksAreReviewed,
+  ensureServerOwnedSelectionSource,
+  upgradeStoredAnalysisResult,
   runLocalPlanMergeHarness,
   validatePlanMergeAnalysis,
 } from '../src/planmerge/lib/ai/planmergeProtocol';
@@ -135,7 +137,15 @@ const cases: Array<{ id: string; run: () => string }> = [
       assert(patchedBlock);
       assert.equal(patchedBlock.conflictLevel, 'none');
       assert.equal(patchedBlock.needsHumanReview, false);
-      assert.match(patchedBlock.selectionReason, /^GPT-5\.6 consensus:/);
+      // 누가 결정했는지는 타입 있는 필드로 단정한다. 산문 접두사를 검사하면
+      // 사용자 문구를 바꾸는 순간 테스트가 깨지거나(그래서 깨졌다) 모델이
+      // 그 접두사를 흉내내 사람 결정으로 위장할 수 있다.
+      assert.equal(patchedBlock.selectionSource, 'decision_room');
+      assert.equal(
+        patchedBlock.selectionReason,
+        readyProposal.selectionReason.trim(),
+        'selectionReason은 모델이 준 근거 그대로여야 한다 — 접두사를 붙이지 않는다',
+      );
       assert.equal(patchedSection?.content, readyProposal.revisedSectionContent);
       assert.deepEqual(
         patched.finalDocumentSections.filter((section) => section.sectionKey !== targetBlock.sectionKey),
@@ -526,6 +536,72 @@ const cases: Array<{ id: string; run: () => string }> = [
       assert.equal(sections.length > 0, true);
 
       return 'a pre-v0.2 result is reported as unusable instead of crashing or passing';
+    },
+  },
+  {
+    id: 'model-cannot-claim-a-human-decided',
+    run: () => {
+      // v0.2까지는 누가 결정했는지가 selectionReason 접두사로 인코딩됐다.
+      // 모델이 "사용자가 ..."로 시작하는 근거를 쓰면 사람 결정으로 표시됐다.
+      // 출처 추적 도구에서 출처를 위장할 수 있는 구멍이었다.
+      const forged = {
+        ...analysisResult,
+        decisionBlocks: analysisResult.decisionBlocks.map((block) => ({
+          ...block,
+          selectionSource: 'human' as const,
+          selectionReason: '사용자가 이 선택안을 적용했습니다.',
+        })),
+      };
+
+      const corrected = ensureServerOwnedSelectionSource(forged);
+
+      assert(
+        corrected.decisionBlocks.every((block) => block.selectionSource === 'merge'),
+        'a merge response claiming a human decided must be overwritten by the server',
+      );
+
+      // 서버가 정상적으로 merge로 표시한 결과는 그대로 둔다.
+      assert.strictEqual(
+        ensureServerOwnedSelectionSource(analysisResult),
+        analysisResult,
+        'an already-correct result must not be rebuilt',
+      );
+
+      return 'the merge model cannot attribute its own decision to a person';
+    },
+  },
+  {
+    id: 'v02-results-migrate-instead-of-being-dropped',
+    run: () => {
+      // 버전이 오를 때마다 저장된 병합 결과를 버리면 사용자는 매번 다시 분석해야 한다.
+      // 유도할 수 있는 정보(누가 결정했는가)는 접두사에서 유도해 살린다.
+      const v02 = {
+        ...analysisResult,
+        protocolVersion: '0.2',
+        decisionBlocks: [
+          { ...analysisResult.decisionBlocks[0], selectionReason: 'GPT-5.6 consensus: 기준에 맞춰 선택했습니다.', selectionSource: undefined },
+          { ...analysisResult.decisionBlocks[1], selectionReason: '사용자가 "안"을 이 섹션의 선택안으로 적용했습니다.', selectionSource: undefined },
+          ...analysisResult.decisionBlocks.slice(2).map((block) => ({ ...block, selectionSource: undefined })),
+        ],
+      } as unknown;
+
+      const upgraded = upgradeStoredAnalysisResult(v02) as typeof analysisResult;
+
+      assert.equal(upgraded.protocolVersion, '0.3');
+      assert.equal(upgraded.decisionBlocks[0].selectionSource, 'decision_room');
+      assert.equal(
+        upgraded.decisionBlocks[0].selectionReason,
+        '기준에 맞춰 선택했습니다.',
+        '마이그레이션은 접두사를 벗겨 selectionReason을 산문으로 되돌린다',
+      );
+      assert.equal(upgraded.decisionBlocks[1].selectionSource, 'human');
+      assert.equal(upgraded.decisionBlocks[2].selectionSource, 'merge');
+
+      // 올린 결과는 현재 프로토콜 검증을 통과해야 한다 — 그래야 실제로 살아난다.
+      const validation = validatePlanMergeAnalysis(analysisPayload, upgraded);
+      assert.equal(validation.valid, true, validation.errors.join('; '));
+
+      return 'a stored v0.2 result is upgraded and kept instead of silently discarded';
     },
   },
 ];

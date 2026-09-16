@@ -1,5 +1,6 @@
 import {
   documentSectionDefinitions,
+  upgradeStoredAnalysisResult,
   validatePlanMergeAnalysis,
 } from './ai/planmergeProtocol';
 import type { PlanMergeAnalysisResult } from './ai/planmergeProtocol';
@@ -411,9 +412,12 @@ function sanitizeAnalysisResult(
     return undefined;
   }
 
-  const validation = validatePlanMergeAnalysis({ project, drafts }, value);
+  // 유도할 수 있는 정보는 올려서 살린다. 버전이 오를 때마다 병합 결과를 버리면
+  // 사용자는 매번 다시 분석해야 한다.
+  const upgraded = upgradeStoredAnalysisResult(value);
+  const validation = validatePlanMergeAnalysis({ project, drafts }, upgraded);
 
-  return validation.valid ? value as unknown as PlanMergeAnalysisResult : undefined;
+  return validation.valid ? upgraded as unknown as PlanMergeAnalysisResult : undefined;
 }
 
 function sanitizeApprovedBlockIds(value: unknown, analysisResult?: PlanMergeAnalysisResult) {

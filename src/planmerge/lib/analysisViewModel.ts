@@ -2,6 +2,7 @@ import type { DecisionSource, DecisionTrace, DocumentSectionData, SectionStatus 
 import type { LocalDraftSubmission } from './localWorkspace';
 import {
   documentSectionDefinitions,
+  type DecisionSelectionSource,
   type NormalizedIdea,
   type DocumentSectionKey,
   type PlanMergeAnalysisResult,
@@ -146,11 +147,7 @@ function createDecisionTraceFromBlock(
       primaryBlock.needsHumanReview
         ? { label: '검토 필요', variant: 'warning' as const }
         : {
-          label: primaryBlock.selectionReason.startsWith('GPT-5.6 consensus:')
-            ? 'AI 합의'
-            : primaryBlock.selectionReason.startsWith('사용자가 ')
-              ? '사용자 선택'
-              : '자동 선택',
+          label: selectionSourceLabel(primaryBlock.selectionSource),
           variant: 'success' as const,
         },
       ...(primaryBlock.conflictLevel !== 'none'
@@ -164,6 +161,19 @@ function createDecisionTraceFromBlock(
     conflicts,
     opinions: [],
   };
+}
+
+/** 누가 정했는지는 타입 있는 필드에서 읽는다. 산문을 파싱하지 않는다. */
+function selectionSourceLabel(source: DecisionSelectionSource) {
+  if (source === 'decision_room') {
+    return 'AI 합의';
+  }
+
+  if (source === 'human') {
+    return '사용자 선택';
+  }
+
+  return '자동 선택';
 }
 
 function createDecisionSources(

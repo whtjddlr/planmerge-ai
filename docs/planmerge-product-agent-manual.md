@@ -57,9 +57,9 @@ Every role instruction specializes these principles.
 - The server, not the browser, decides whether a result is applicable.
 - Human decisions and overrides must be recorded rather than folded invisibly into a regenerated document.
 
-The merge-analysis protocol currently uses `protocolVersion: "0.2"`. A protocol-shape change requires a deliberate version review, validator update, regression coverage, and documentation update.
+The merge-analysis protocol currently uses `protocolVersion: "0.3"`. A protocol-shape change requires a deliberate version review, validator update, regression coverage, and documentation update.
 
-### Forbidden-direction judgement (v0.2)
+### Forbidden-direction judgement (v0.2+)
 
 Every `NormalizedIdea` carries `forbiddenDirectionConflict`: `{ conflicts, reason, evidence }`. The normalization step decides it once, by meaning, and every later stage — merge, server recovery of dropped ideas, and the Decision Room safety gate — reads that judgement instead of re-deriving one.
 

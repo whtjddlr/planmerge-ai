@@ -106,7 +106,10 @@ export function applyDecisionResolutionProposal(
   const nextTargetBlock: ProtocolDecisionBlock = {
     ...targetBlock,
     selectedOptionId: consensusOptionId,
-    selectionReason: `GPT-5.6 consensus: ${proposal.selectionReason.trim()}`,
+    // selectionReason은 사람이 읽는 산문으로만 둔다. 누가 결정했는지는
+    // selectionSource가 들고 있으므로 접두사로 인코딩하지 않는다.
+    selectionReason: proposal.selectionReason.trim(),
+    selectionSource: 'decision_room',
     confidence: Math.min(Math.max(proposal.confidence, 0), 1),
     conflictLevel: 'none',
     needsHumanReview: false,
@@ -118,7 +121,7 @@ export function applyDecisionResolutionProposal(
           ...option,
           optionType: 'alternative' as const,
           differenceFromSelected: option.differenceFromSelected
-            ?? 'Retained from the original decision block after the GPT-5.6 consensus patch.',
+            ?? '합의안 적용 전 Decision Block에 있던 의견입니다.',
           severity: undefined,
         })),
     ],
@@ -173,6 +176,7 @@ function applyOverrideToBlock(
     ...block,
     selectedOptionId: optionId,
     selectionReason: `사용자가 "${selectedContent}"을 이 섹션의 선택안으로 적용했습니다.`,
+    selectionSource: 'human',
     conflictLevel: inferConflictLevel(nextOptions),
     needsHumanReview: false,
     confidence: Math.max(block.confidence, 0.8),
