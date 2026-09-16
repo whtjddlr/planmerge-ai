@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import {
   buildDraftNormalizePrompt,
+  MAX_ANALYSIS_DRAFT_COUNT,
   buildMergeNormalizedIdeasPrompt,
   buildPlanMergeRepairPrompt,
   conflictsWithForbiddenDirection,
@@ -42,7 +43,26 @@ export const maxDuration = 300;
 const RATE_LIMIT = { limit: 5, windowMs: 60_000 };
 // 초안 전부를 한꺼번에 던지면 업스트림 rate limit을 자초한다. 동시 실행을 묶어
 // 429를 줄이고, 재시도 백오프가 실제로 회복할 여지를 남긴다.
-const NORMALIZE_CONCURRENCY = 6;
+//
+// 지연은 토큰 양이 아니라 배치 수가 결정한다. 초안 13개를 6씩 돌리면 3배치이고,
+// 각 배치는 그 안에서 가장 느린 호출을 기다린다. 업스트림 한도는 배포마다 다르므로
+// 값을 환경변수로 빼 둔다.
+// 실측(초안 13개, gpt-5.6-luna): 6 → 54초 / 13 → 47초, 양쪽 모두 429 없음.
+// 13%만 줄어드는 이유는 merge 호출 1건이 병렬화되지 않는 하한이기 때문이다.
+// normalize를 더 붙여도 그 아래로는 내려가지 않는다.
+const DEFAULT_NORMALIZE_CONCURRENCY = 12;
+
+function readNormalizeConcurrency() {
+  const raw = Number(process.env.NORMALIZE_CONCURRENCY);
+
+  if (Number.isSafeInteger(raw) && raw >= 1 && raw <= MAX_ANALYSIS_DRAFT_COUNT) {
+    return raw;
+  }
+
+  return DEFAULT_NORMALIZE_CONCURRENCY;
+}
+
+const NORMALIZE_CONCURRENCY = readNormalizeConcurrency();
 // merge 출력은 초안 수에 따라 커진다. 예산이 모자라면 응답이 incomplete로 잘려
 // 전체 요청이 실패하므로, 아이디어 에코를 없앤 뒤에도 여유를 둔다.
 const MERGE_MAX_OUTPUT_TOKENS = 32_000;

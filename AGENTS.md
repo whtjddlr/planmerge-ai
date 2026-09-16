@@ -129,7 +129,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - 호출 비용이 크므로(초안 수만큼 병렬 호출) rate limit(`analyze` 5회/분)을 완화하지 않는다.
 - **프롬프트에 같은 데이터를 두 번 넣지 않는다.** merge 프롬프트는 `normalizedIdeas`를 딱 한 번 직렬화한다. 한때 두 번 들어가 있어 호출마다 3천 토큰(전체 입력의 22%)을 낭비했다. 프롬프트를 고칠 때 `JSON.stringify(normalizedIdeas)`가 몇 번 나오는지 센다.
 - 프롬프트 캐시는 기대하지 않는다. normalize 프롬프트는 호출당 약 1,050 토큰이고 공통 접두사는 약 690 토큰으로 OpenAI 캐시 최소치(1,024)에 미달한다. 실측 적중률 0%다. 캐시를 노려 프롬프트를 늘리지 않는다 — 미달이면 늘린 만큼 그냥 더 낸다.
-- 분석 지연(초안 7개 약 53초)은 토큰 양이 아니라 왕복 횟수가 결정한다. `NORMALIZE_CONCURRENCY`를 올리면 배치가 줄어 빨라지지만 업스트림 rate limit 위험이 커진다. 이 값은 의도적으로 6이며, 바꾸려면 근거를 남긴다.
+- 분석 지연은 토큰 양이 아니라 배치 수가 결정한다. 기본 `NORMALIZE_CONCURRENCY`는 12이고 환경변수로 덮을 수 있다. 실측(초안 13개): 6 → 54초, 13 → 47초, 양쪽 모두 429 없음. **13%만 줄어드는 이유는 merge 호출 1건이 병렬화되지 않는 하한**이라서다 — 지연을 더 줄이려면 normalize 동시성이 아니라 merge 단계를 봐야 한다.
 
 ### Rate limit
 - `src/server/rateLimit.ts`는 `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`이 있으면 Upstash Redis REST fixed-window를 사용하고, 없거나 호출 실패 시 인메모리 fixed-window로 fallback한다. Rate limit 오류로 제품이 중단되면 안 되므로 Upstash 실패는 로그만 남기고 fail-open fallback한다.
