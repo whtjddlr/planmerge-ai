@@ -8,6 +8,47 @@
 - 실제 로컬 API 검증: 서버 실행 후 `npx tsx scripts/evaluate-content-scenarios.ts --live`
 - OpenAI 직접 분석: 로컬 `.env.local`에 `OPENAI_API_KEY`, `ANALYSIS_PROVIDER=openai`, `OPENAI_ANALYSIS_MODEL=gpt-4.1` 설정. 키는 커밋하지 않습니다.
 
+## 다음 작업: 영상 기획 모드
+
+이 저장소는 영상 제작 워크플로우와 별도의 **기획서 서비스**입니다. 현재 `service_plan`은 서비스 기획을 위한 12개 항목을 사용합니다. 다음 에이전트는 이 구조를 깨지 않고 `video_plan`을 추가해 영상 기획 입력·비교·산출물을 분리합니다.
+
+### 목표 사용 흐름
+
+`영상 기획 선택 → 제작 조건 입력 → 여러 기획 초안 입력 → 콘셉트·조건 비교 → 충돌/미결정 확인 → 사람이 안 선택 → 영상 제작안 내보내기`
+
+### 영상 기획에서 관리할 값
+
+- 목적·핵심 메시지·타깃 시청자·게시 채널
+- 영상 형식(가로/세로/정사각형), 목표 길이, 톤·레퍼런스
+- 이야기 흐름(도입·전개·마무리), 장면/샷 목록, 장면별 역할
+- 사용 가능한 소재, 새로 필요한 소재, 스포일러 범위
+- 일정·예산·촬영/생성 제약, 미결정 사항
+- 생성형 콘텐츠를 쓸 때 유지할 인물·의상·소품·공간·스타일
+
+### 구현 순서
+
+1. `ProjectSettings.documentType`에 `video_plan`을 추가하고 영상 전용 필드와 8~12개 섹션 정의를 만든다. 기존 `service_plan`의 문구와 결과 형식은 바꾸지 않는다.
+2. 초안 정규화·병합 프롬프트를 `documentType`에 따라 분기한다. 영상 모드에서는 타깃·메시지·길이·비율·톤·스포일러·소재·장면 흐름을 비교한다.
+3. 모델이 없는 정보(예산, 출연자, 장면, 성과)를 채우지 않도록 `missingSections`와 확인 질문으로 반환한다. 서로 양립하지 않는 타깃·길이·형식·제약은 Decision Block의 충돌로 표시한다.
+4. 결과 화면은 `영상 제작안`으로 표시하고 콘셉트, 이야기 흐름, 샷 목록, 소재 목록, 미결정 사항을 내보낸다. 서비스 기획 화면의 `MVP 범위` 같은 용어를 영상 모드에서 그대로 노출하지 않는다.
+5. OpenAI 응답의 실제 `source`, `model`, 응답 시각을 보존하고, 로컬 폴백은 의미 판단 결과로 표시하지 않는다. 사람의 선택과 선택 이유를 기록한다.
+
+### 반드시 재현할 테스트
+
+- 짧은 메모 하나: 없는 정보는 빈칸/확인 질문으로 남는가?
+- 신규 시청자용 세로 30초 티저와 기존 팬용 가로 3분 해설: 타깃·길이·스포일러 충돌이 드러나는가?
+- 제작 기간 3일에서 1일로 변경: 소재·샷·일정이 다시 검토되는가?
+- 기존 예고편만 사용 가능하지만 신규 인터뷰를 제안한 초안: 제약 위반으로 표시되는가?
+- 선택을 바꾼 뒤 관련 섹션만 바뀌고 다른 섹션·출처·원문 발췌가 유지되는가?
+
+검증은 `npx tsx scripts/evaluate-content-scenarios.ts`로 재현하고, OpenAI 키가 설정된 경우에만 `--live`를 사용한다. HTTP 200이나 JSON 유효성만으로 영상 기획 품질을 통과시키지 않는다. 영상 결과물 생성과 화질 평가는 이 저장소의 범위가 아니다.
+
+### 다음 에이전트의 시작점
+
+- 먼저 `AGENTS.md`, `docs/agents/`, `docs/experiments/content-planning/README.md`를 읽는다.
+- `service_plan` 회귀 테스트를 먼저 실행한 뒤 영상 모드 코드를 추가한다.
+- 완료 기준은 `npm run harness:quality`, `npm run lint`, `npm run build` 통과와 위 시나리오의 입력·결과 기록이다.
+
 아래는 기존 Build Week 제출 이력과 기술 설명입니다.
 
 > **Git merge for team decisions, not just documents.** PlanMerge combines AI-generated planning drafts into one source-traceable plan, exposes disagreements instead of silently flattening them, and gives people the final say in a Decision Room.
