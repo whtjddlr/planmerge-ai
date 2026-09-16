@@ -10,6 +10,13 @@ export type DocumentSectionData = {
   decisionTrace?: DecisionTrace;
   // 한 섹션에 Decision Block이 여러 개일 때 전체 목록. decisionTrace는 대표(첫 번째) 블록.
   decisionTraces?: DecisionTrace[];
+  /**
+   * 이 섹션의 선택안이 프로젝트 금지 방향을 제안하고 있는가.
+   *
+   * 충돌 의견이 남아 있는 것과는 다른 상태다. 충돌은 "고르지 못한 것"이고 이것은
+   * "고른 것이 기준을 어긴 것"이다. Review Queue가 둘을 구분해 안내해야 한다.
+   */
+  violatesForbiddenDirection?: boolean;
 };
 
 export type DecisionSource = {

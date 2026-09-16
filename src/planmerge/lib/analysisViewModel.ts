@@ -30,7 +30,14 @@ export function createDocumentSectionsFromAnalysis(
   return documentSectionDefinitions.map((definition) => {
     const finalSection = finalSectionsByKey.get(definition.key);
     const decisionBlocks = decisionBlocksByKey.get(definition.key) ?? [];
-    const status = getSectionStatus(definition.key, analysisResult);
+    const violatesForbiddenDirection = sectionSelectsForbiddenDirection(
+      definition.key,
+      analysisResult,
+      ideasById,
+    );
+    const status = violatesForbiddenDirection
+      ? 'conflict'
+      : getSectionStatus(definition.key, analysisResult);
     const decisionTraces = decisionBlocks.map((block) =>
       createDecisionTraceFromBlock(
         definition.key,
@@ -49,6 +56,7 @@ export function createDocumentSectionsFromAnalysis(
       status,
       decisionTrace: decisionTraces[0],
       decisionTraces: decisionTraces.length ? decisionTraces : undefined,
+      ...(violatesForbiddenDirection ? { violatesForbiddenDirection } : {}),
     };
   });
 }
@@ -61,6 +69,32 @@ function createEmptyDocumentSections(): DocumentSectionData[] {
     content: '',
     status: 'pending',
   }));
+}
+
+/**
+ * 선택안이 금지 방향 아이디어에 근거하는가.
+ *
+ * `conflictLevel`로는 알 수 없다. 사람이 충돌 의견을 선택안으로 올리면 그 옵션은
+ * `selected`가 되고 severity가 사라져 conflictLevel이 none으로 내려간다. 그래서
+ * 옵션 타입이 아니라 근거 아이디어의 판정을 읽는다.
+ */
+function sectionSelectsForbiddenDirection(
+  sectionKey: DocumentSectionKey,
+  analysisResult: PlanMergeAnalysisResult,
+  ideasById: Map<string, NormalizedIdea>,
+) {
+  return analysisResult.decisionBlocks
+    .filter((block) => block.sectionKey === sectionKey)
+    .some((block) => {
+      const selected = block.options.find((option) => option.id === block.selectedOptionId);
+
+      return (selected?.sourceIdeaIds ?? []).some((ideaId) => {
+        const idea = ideasById.get(ideaId);
+
+        // 리스크 경고는 금지 방향 제안이 아니다.
+        return idea?.forbiddenDirectionConflict.conflicts === true && idea.intent !== 'warn';
+      });
+    });
 }
 
 function getSectionStatus(sectionKey: DocumentSectionKey, analysisResult: PlanMergeAnalysisResult): SectionStatus {

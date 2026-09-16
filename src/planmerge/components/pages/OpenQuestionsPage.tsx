@@ -152,7 +152,7 @@ function createReviewQueueItem(section: DocumentSectionData): ReviewQueueItem {
     section: section.title,
     topic: trace?.topic ?? '추가 작성 필요',
     category,
-    status: sectionStatusLabel(section.status),
+    status: queueStatusLabel(section),
     statusVariant: sectionStatusVariant(section.status),
     reason: sectionReason(section),
     nextAction: sectionNextAction(section),
@@ -236,6 +236,14 @@ function queuePriority(category: QueueCategory) {
   return 3;
 }
 
+function queueStatusLabel(section: DocumentSectionData) {
+  if (section.violatesForbiddenDirection) {
+    return '금지 방향 위반';
+  }
+
+  return sectionStatusLabel(section.status);
+}
+
 function sectionStatusLabel(status: SectionStatus) {
   if (status === 'conflict') return '충돌 검토';
   if (status === 'review') return '승인 후보';
@@ -252,6 +260,10 @@ function sectionStatusVariant(status: SectionStatus): BadgeVariant {
 
 function sectionReason(section: DocumentSectionData) {
   const trace = section.decisionTrace;
+
+  if (section.violatesForbiddenDirection) {
+    return '현재 선택안이 프로젝트가 금지한 방향을 제안합니다. 다른 의견을 선택안으로 바꾸거나, 프로젝트 설정에서 금지 방향 기준을 고치고 다시 분석해야 합니다.';
+  }
 
   if (section.status === 'conflict') {
     const conflictCount = trace?.conflicts.length ?? 0;
@@ -283,6 +295,7 @@ function sectionReason(section: DocumentSectionData) {
 }
 
 function sectionNextAction(section: DocumentSectionData) {
+  if (section.violatesForbiddenDirection) return '금지 방향 위반 해소 — 선택안 변경 또는 기준 수정';
   if (section.status === 'conflict') return '충돌 의견 비교 후 선택안 확정';
   if (section.status === 'review') return '근거와 출처 확인 후 승인';
   if (section.status === 'pending') return '초안 추가 또는 섹션 수동 보강';
