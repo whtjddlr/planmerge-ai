@@ -1,0 +1,82 @@
+{
+  "project": {
+    "title": "동네 러닝 크루 매칭 앱",
+    "goal": "혼자 달리는 사람이 근처에서 비슷한 페이스의 러닝 크루를 찾아 함께 뛰게 만든다. 6주 안에 MVP를 검증한다.",
+    "documentType": "service_plan",
+    "contextPack": "팀은 iOS 1명, 백엔드 1명, 디자이너 1명. 선택 기준은 6주 내 검증 가능성, 낮은 운영 부담, 초기 사용자 확보 속도다.",
+    "forbiddenDirection": "초기 MVP에 실시간 채팅, 인앱 결제, 웨어러블 기기 연동은 포함하지 않는다.",
+    "outputStyle": "한국어, 간결한 문장"
+  },
+  "drafts": [
+    {
+      "id": "draft-minseo",
+      "authorName": "강민서",
+      "authorRole": "PM",
+      "aiModel": "ChatGPT",
+      "taskTitle": "문제 정의",
+      "rawText": "혼자 달리는 사람들이 가장 자주 그만두는 이유는 체력이 아니라 약속이 없다는 점이다. 러닝 앱들은 기록은 잘 보여주지만 같이 뛸 사람을 찾아주지는 않는다. 동네 단위로 비슷한 페이스의 사람을 이어주면 지속률이 올라갈 것이라고 본다.",
+      "status": "parsed",
+      "createdAtLabel": "3일 전"
+    },
+    {
+      "id": "draft-taeho",
+      "authorName": "윤태호",
+      "authorRole": "백엔드",
+      "aiModel": "Claude",
+      "taskTitle": "MVP 범위",
+      "rawText": "- 6주에 넣을 것: 위치 기반 크루 목록, 페이스 필터, 참가 신청, 신청 수락/거절\n- 6주에 빼는 것: 실시간 채팅, 결제, 애플워치 연동\n- 이유: 채팅은 신고/차단/보관 정책까지 딸려와서 6주 안에 안 끝난다. 연락은 신청 수락 시 오픈채팅 링크를 교환하는 수준으로 충분하다.",
+      "status": "parsed",
+      "createdAtLabel": "3일 전"
+    },
+    {
+      "id": "draft-jiwoo",
+      "authorName": "서지우",
+      "authorRole": "디자이너",
+      "aiModel": "Gemini",
+      "taskTitle": "타깃 사용자",
+      "rawText": "처음 러닝을 시작한 20~30대가 주 타깃이라고 생각한다. 이들은 '내가 너무 느려서 같이 뛰면 짐이 될까' 하는 걱정이 가장 크다. 그래서 페이스를 숫자로만 보여주면 위축된다. 초보/중급/상급 같은 말보다 '대화하면서 뛸 수 있는 속도' 처럼 상황으로 표현하는 게 맞다.",
+      "status": "parsed",
+      "createdAtLabel": "2일 전"
+    },
+    {
+      "id": "draft-hyunwoo",
+      "authorName": "박현우",
+      "authorRole": "마케팅",
+      "aiModel": "ChatGPT",
+      "taskTitle": "성공 지표",
+      "rawText": "검증 지표는 세 개로 본다. 첫째, 크루 신청 후 실제로 함께 뛴 비율 40% 이상. 둘째, 첫 참가 후 2주 내 재참가율 30% 이상. 셋째, 한 지역에서 주당 열리는 러닝 수 10회 이상. 다운로드 수는 지표로 쓰지 않는다. 설치만 하고 안 뛰는 사람이 너무 많을 것이다.",
+      "status": "parsed",
+      "createdAtLabel": "2일 전"
+    },
+    {
+      "id": "draft-chaewon",
+      "authorName": "임채원",
+      "authorRole": "iOS",
+      "aiModel": "Cursor",
+      "taskTitle": "요구사항",
+      "rawText": "위치는 동 단위까지만 저장. 정확한 좌표 저장 안 함. 신청자에게 상대 실명 노출 금지, 닉네임만.",
+      "status": "parsed",
+      "createdAtLabel": "어제"
+    },
+    {
+      "id": "draft-eunbi",
+      "authorName": "조은비",
+      "authorRole": "기획",
+      "aiModel": "Other",
+      "taskTitle": "MVP 범위",
+      "rawText": "실시간 채팅은 MVP에 반드시 있어야 한다. 모르는 사람과 만나기 전에 몇 마디라도 주고받지 않으면 아무도 신청을 수락하지 않을 것이다. 오픈채팅 링크 교환은 이탈 지점이 하나 더 생기는 것이라 오히려 위험하다. 채팅을 넣고 대신 페이스 필터를 빼는 쪽이 낫다고 본다.",
+      "status": "parsed",
+      "createdAtLabel": "어제"
+    },
+    {
+      "id": "draft-jihun",
+      "authorName": "한지훈",
+      "authorRole": "CS",
+      "aiModel": "Claude",
+      "taskTitle": "리스크와 사용자",
+      "rawText": "러닝을 오래 한 사람들은 이미 자기 크루가 있어서 이 앱을 쓸 이유가 없다. 결국 들어오는 사람은 갓 시작한 사람들일 것이다. 문제는 처음 나온 사람이 한 번 안 좋은 경험을 하면 바로 끊는다는 점이다. 초보가 혼자 남는 상황을 만들지 않는 장치가 필요하다. 그리고 달릴 사람이 없어서 그만두는 게 진짜 이유라는 데는 동의한다.",
+      "status": "parsed",
+      "createdAtLabel": "어제"
+    }
+  ]
+}

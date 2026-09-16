@@ -555,10 +555,13 @@ function getDecisionResolutionErrorMessage(error: unknown) {
 
 function ApplyOptionButton({
   optionId,
+  optionKind,
   decisionBlockId,
   onApplyDecisionOption,
 }: {
   optionId?: string;
+  /** 어떤 종류의 의견을 올리는 버튼인지. 화면에는 같은 글자가 여러 개 보이므로 구분한다. */
+  optionKind: '대안' | '충돌';
   decisionBlockId: string;
   onApplyDecisionOption?: (decisionBlockId: string, optionId: string) => void;
 }) {
@@ -570,6 +573,7 @@ function ApplyOptionButton({
     <button
       type="button"
       data-testid="apply-decision-option"
+      aria-label={`${optionKind} 의견을 선택안으로 적용`}
       className="mt-3 w-full rounded-md border border-gray-300 px-3 py-2 text-xs text-gray-700 transition-colors hover:bg-gray-50"
       onClick={() => onApplyDecisionOption(decisionBlockId, optionId)}
     >
@@ -1175,6 +1179,7 @@ export function DecisionPanel({
                   <div className="text-xs text-gray-600 mb-2">{alternative.description}</div>
                   <SourceChips opinion={alternative} />
                   <ApplyOptionButton
+                    optionKind="대안"
                     optionId={alternative.optionId}
                     decisionBlockId={trace.decisionBlockId}
                     onApplyDecisionOption={onApplyDecisionOption}
@@ -1207,6 +1212,7 @@ export function DecisionPanel({
                   <div className="text-xs text-gray-600 mb-2">{conflict.description}</div>
                   <SourceChips opinion={conflict} />
                   <ApplyOptionButton
+                    optionKind="충돌"
                     optionId={conflict.optionId}
                     decisionBlockId={trace.decisionBlockId}
                     onApplyDecisionOption={onApplyDecisionOption}

@@ -1086,7 +1086,10 @@ export default function App() {
           variant="banner"
         />
         {analysisError && (
-          <div className="flex items-start justify-between gap-4 border-b border-red-100 bg-red-50 px-8 py-3 text-sm text-red-800">
+          <div
+            data-testid="analysis-error-banner"
+            className="flex items-start justify-between gap-4 border-b border-red-100 bg-red-50 px-8 py-3 text-sm text-red-800"
+          >
             <div className="min-w-0">
               <div className="font-medium">분석에 실패했습니다.</div>
               <div className="mt-0.5">{analysisError.message}</div>

@@ -126,7 +126,7 @@ export function AnalysisKeySetup({ status, onCredentialsChange, variant }: Props
 
   if (variant === 'banner') {
     return (
-      <div className="border-b border-blue-100 bg-blue-50 px-8 py-3 text-sm text-blue-900">
+      <div data-testid="analysis-key-banner" className="border-b border-blue-100 bg-blue-50 px-8 py-3 text-sm text-blue-900">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <span className="font-medium">AI 분석을 사용하려면 OpenAI API 키가 필요합니다.</span>

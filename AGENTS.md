@@ -28,10 +28,15 @@ This version has breaking changes — APIs, conventions, and file structure may 
 | `npm run harness:local` | 로컬 하네스 단건 실행 + 프롬프트 미리보기 | 오프라인 |
 | `npm run build` | `next build` | `OPENAI_API_KEY`/`GMS_API_KEY`/`DATABASE_URL` 없어도 성공해야 함 |
 | `npm run dev` | 개발 서버 | |
+| `npm run test:e2e` | **Playwright UI 흐름** (7개 + 로그인 1개) | `playwright.config.ts`가 자체 dev 서버를 띄운다. `webServer.env`가 DB·분석 키를 비워 유료 호출과 운영 DB 접근을 막는다. 결과가 필요한 스펙은 `e2e/support/workspace.ts`가 분석 API를 실제 모델 출력 픽스처로 가로챈다 |
 | `npm run test:live` | **실제 모델 E2E 시나리오** (5개) | 유료 호출. `npm run dev`가 떠 있어야 함. `OPENAI_API_KEY`를 BYOK 헤더로 보냄. CI 기본 경로에 넣지 않는다 |
 | `npm run setup` | API 키 입력 → 키 검증 → 모델 자동 선택 → `.env.local` 생성/갱신 | 대화형 입력은 화면에 표시되지 않음. `echo $KEY \| npm run setup`도 가능 |
 
-이 리포에는 Jest/Vitest/Playwright가 **없다**. `harness:quality`가 유일한 자동 회귀 검증이므로, 코드 수정 후 반드시 실행한다.
+이 리포에는 Jest/Vitest가 **없다**. 자동 검증은 세 층이다:
+
+1. `harness:quality` — 오프라인 프로토콜·검증기 회귀. **코드 수정 후 반드시 실행한다.**
+2. `test:e2e` — Playwright UI 흐름. 모델 호출 없이 픽스처로 돈다. **화면 문구를 바꿨으면 반드시 실행한다** — 예전에 이 문서가 "Playwright가 없다"고 적혀 있어서 문구 변경이 E2E를 깨뜨린 채 머지된 적이 있다.
+3. `test:live` — 실제 모델. 유료라 필요할 때만.
 
 ## 아키텍처 지도
 
@@ -46,7 +51,9 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - `src/planmerge/lib/ai/opinionClustering.ts` — 익명 의견 클러스터링 (프롬프트 + 검증). 실패 시 `502`.
 - `src/planmerge/lib/localWorkspace.ts` — localStorage 워크스페이스 상태, 샘플 데이터, import 검증.
 - `src/server/` — Prisma 싱글턴(`db.ts`), Upstash/인메모리 fallback rate limit(`rateLimit.ts`), 공유 워크스페이스 집계(`sharedWorkspace.ts`).
-- `src/app/api/workspaces/**` — 스냅샷 공유/투표/의견/참여 집계 API. 정규화 테이블(Project~DecisionBlock)은 스키마에만 있고 아직 미사용.
+- `src/app/api/workspaces/**` — 스냅샷 공유/투표/의견/참여 집계 API.
+- `prisma/schema.prisma` — 모델 6개뿐이다: `User`/`Account`(Auth.js 어댑터가 내부에서 쓴다)와 `SharedWorkspace*` 4개. 공유는 `snapshot Json` 하나로 돌아간다. 정규화 저장(Project~DecisionOptionSource 16개 모델)은 한 번도 쓰이지 않아 제거했다 — 정규화로 가려면 그때 설계해서 추가한다.
+- `e2e/` — Playwright 스펙 + `fixtures/`(실제 모델 출력) + `support/workspace.ts`(워크스페이스 심기, API 가로채기).
 - `scripts/run-planmerge-quality-cases.ts` — 품질 회귀 케이스 정의.
 - `scripts/run-decision-resolution-cases.ts` — Decision Room·프로토콜 불변식 케이스 정의.
 - `scripts/live-scenarios.ts` + `scripts/run-live-scenarios.ts` — 실제 모델이 규칙을 지키는지 보는 E2E 시나리오. 오프라인 하네스가 못 잡는 것(의미 기반 충돌 판정, 프롬프트 인젝션 불복종, 빈약한 입력에 지어내지 않기)을 본다. 공통 불변식에는 `sourceExcerpt`가 실제 초안 원문과 겹치는지 검사가 들어 있어 출처 날조를 잡는다.
