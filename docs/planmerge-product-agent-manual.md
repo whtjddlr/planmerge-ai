@@ -61,6 +61,8 @@ The merge-analysis protocol currently uses `protocolVersion: "0.1"`. A protocol-
 
 ## Model routing and evidence
 
+Normalization, merge and opinion clustering also support direct OpenAI through `OPENAI_API_KEY` and `ANALYSIS_PROVIDER=openai`. `OPENAI_ANALYSIS_MODEL` selects the analysis model. The server labels those outputs `source: openai`; legacy `gms` labels in prompt examples are not execution evidence. Every deterministic local selection requires human review, including cases where keyword rules find no conflict.
+
 | Workflow | Environment variable | Default | Notes |
 |---|---|---|---|
 | Draft normalization, merge, repair, opinion clustering | `GMS_DEFAULT_MODEL` | `gpt-4.1` | Existing pipeline |

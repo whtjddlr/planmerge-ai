@@ -121,7 +121,7 @@ export function AnalysisInspectorPage({
             <h2 className="text-2xl text-gray-900">Analysis Inspector</h2>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-500">
               <StatusBadge variant={analysisResult.source === 'local_harness' ? 'warning' : 'success'}>
-                {analysisResult.source === 'gms'
+                {analysisResult.source === 'openai' ? 'OpenAI' : analysisResult.source === 'gms'
                   ? 'GMS'
                   : analysisResult.source === 'gemini'
                     ? 'Gemini'

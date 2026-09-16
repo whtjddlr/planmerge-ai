@@ -130,6 +130,15 @@ const completeSectionDrafts = [
 
 const cases: QualityCase[] = [
   {
+    id: 'content-format-human-review',
+    title: '로컬 분석은 30초 세로와 3분 가로 제작안의 임시 선택을 사람 검토로 넘긴다.',
+    payload: payload([
+      draft('short-content', '핵심 기능: 처음 보는 시청자를 위한 세로 30초 소개 영상을 기존 예고편으로 제작한다.'),
+      draft('long-content', '핵심 기능: 기존 팬을 위한 가로 3분 소개 영상을 신규 출연자 인터뷰로 제작한다.'),
+    ]),
+    expect: { parse: 'valid', requireHumanReview: true, requireAllInputDraftsUsed: true },
+  },
+  {
     id: 'baseline-default',
     title: '기본 샘플은 12개 섹션을 채우고 MVP 범위 충돌을 드러내야 한다.',
     payload: {

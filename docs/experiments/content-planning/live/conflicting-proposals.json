@@ -1,0 +1,240 @@
+{
+  "syntheticInputs": true,
+  "input": {
+    "project": {
+      "title": "가상 신규 예능 소개 콘텐츠",
+      "goal": "처음 보는 시청자가 출연자 관계를 이해하도록 소개 콘텐츠의 제작안을 결정한다.",
+      "documentType": "service_plan",
+      "contextPack": "2명, 3일 작업. 본편 결말은 공개하지 않는다. 타깃은 프로그램을 보지 않은 20대다.",
+      "forbiddenDirection": "결말 스포일러와 미확보 출연자 인터뷰 사용 금지",
+      "outputStyle": "짧은 한국어 설명과 결정이 필요한 질문"
+    },
+    "drafts": [
+      {
+        "id": "editor",
+        "rawText": "타깃은 첫 시청자다. 핵심 기능: 출연자 소개 영상은 세로 30초로 제작한다. 기존 예고편 소재만 사용한다. MVP 범위는 인물 2명 소개와 관계 질문 하나다.",
+        "authorName": "editor",
+        "authorRole": "기획",
+        "aiModel": "Other",
+        "taskTitle": "소개 콘텐츠 기획",
+        "status": "submitted",
+        "createdAtLabel": "합성 테스트 자료"
+      },
+      {
+        "id": "producer",
+        "rawText": "타깃은 기존 팬이다. 핵심 기능: 출연자 소개 영상은 가로 3분으로 제작한다. 신규 인터뷰를 촬영한다. MVP 범위에 결말 스포일러를 포함한다.",
+        "authorName": "producer",
+        "authorRole": "기획",
+        "aiModel": "Other",
+        "taskTitle": "소개 콘텐츠 기획",
+        "status": "submitted",
+        "createdAtLabel": "합성 테스트 자료"
+      }
+    ]
+  },
+  "before": {
+    "protocolVersion": "0.1",
+    "source": "local_harness",
+    "normalizedIdeas": [
+      {
+        "id": "idea_1",
+        "sourceDraftId": "editor",
+        "sourceModel": "Other",
+        "sourceExcerpt": "타깃은 첫 시청자다. 핵심 기능: 출연자 소개 영상은 세로 30초로 제작한다. 기존 예고편 소재만 사용한다. MVP 범위는 인물 2명 소개와 관계 질문 하나다.",
+        "sectionKey": "core_features",
+        "topic": "핵심 기능 구성",
+        "ideaType": "feature",
+        "normalizedText": "타깃은 첫 시청자다. 핵심 기능: 출연자 소개 영상은 세로 30초로 제작한다. 기존 예고편 소재만 사용한다. MVP 범위는 인물 2명 소개와 관계 질문 하나다.",
+        "intent": "propose",
+        "confidence": 0.72
+      },
+      {
+        "id": "idea_2",
+        "sourceDraftId": "producer",
+        "sourceModel": "Other",
+        "sourceExcerpt": "타깃은 기존 팬이다. 핵심 기능: 출연자 소개 영상은 가로 3분으로 제작한다. 신규 인터뷰를 촬영한다. MVP 범위에 결말 스포일러를 포함한다.",
+        "sectionKey": "core_features",
+        "topic": "핵심 기능 구성",
+        "ideaType": "feature",
+        "normalizedText": "타깃은 기존 팬이다. 핵심 기능: 출연자 소개 영상은 가로 3분으로 제작한다. 신규 인터뷰를 촬영한다. MVP 범위에 결말 스포일러를 포함한다.",
+        "intent": "propose",
+        "confidence": 0.72
+      }
+    ],
+    "decisionBlocks": [
+      {
+        "id": "decision_1",
+        "sectionKey": "core_features",
+        "topic": "핵심 기능 구성",
+        "selectedOptionId": "option_1_1",
+        "selectionReason": "로컬 폴백 규칙으로 금지 방향과 충돌하지 않는 첫 번째 아이디어를 선택했습니다. 실제 기준 부합 여부는 사람이 확인해야 합니다.",
+        "confidence": 0.72,
+        "conflictLevel": "none",
+        "needsHumanReview": true,
+        "options": [
+          {
+            "id": "option_1_1",
+            "optionType": "selected",
+            "content": "타깃은 첫 시청자다. 핵심 기능: 출연자 소개 영상은 세로 30초로 제작한다. 기존 예고편 소재만 사용한다. MVP 범위는 인물 2명 소개와 관계 질문 하나다.",
+            "sourceIdeaIds": [
+              "idea_1"
+            ]
+          },
+          {
+            "id": "option_1_2",
+            "optionType": "alternative",
+            "content": "타깃은 기존 팬이다. 핵심 기능: 출연자 소개 영상은 가로 3분으로 제작한다. 신규 인터뷰를 촬영한다. MVP 범위에 결말 스포일러를 포함한다.",
+            "differenceFromSelected": "타깃은 첫 시청자다. 핵심 기능: 출연자 소개 영상은 세로 30초로 제작한다. 기존 예고편 소재만 사용한다. MVP 범위는 인물 2명 소개와 관계 질문 하나다.와 판단 방향이 다릅니다.",
+            "sourceIdeaIds": [
+              "idea_2"
+            ]
+          }
+        ]
+      }
+    ],
+    "finalDocumentSections": [
+      {
+        "sectionKey": "core_features",
+        "title": "핵심 기능",
+        "content": "타깃은 첫 시청자다. 핵심 기능: 출연자 소개 영상은 세로 30초로 제작한다. 기존 예고편 소재만 사용한다. MVP 범위는 인물 2명 소개와 관계 질문 하나다.",
+        "sourceDecisionBlockIds": [
+          "decision_1"
+        ]
+      }
+    ],
+    "missingSections": [
+      "overview",
+      "problem",
+      "target_user",
+      "pain_points",
+      "solution",
+      "mvp_scope",
+      "user_flow",
+      "requirements",
+      "success_metrics",
+      "risks",
+      "open_questions"
+    ],
+    "warnings": [
+      "분석 API 키가 없어 로컬 규칙으로 정리했습니다. 의미 기반 비교 결과가 아니므로 직접 검토해 주세요.",
+      "로컬 하네스 결과입니다. 실제 모델 호출 전 구조 검증과 화면 연결 확인에 사용합니다."
+    ]
+  },
+  "after": {
+    "protocolVersion": "0.1",
+    "source": "local_harness",
+    "normalizedIdeas": [
+      {
+        "id": "idea_1",
+        "sourceDraftId": "editor",
+        "sourceModel": "Other",
+        "sourceExcerpt": "타깃은 첫 시청자다. 핵심 기능: 출연자 소개 영상은 세로 30초로 제작한다. 기존 예고편 소재만 사용한다. MVP 범위는 인물 2명 소개와 관계 질문 하나다.",
+        "sectionKey": "core_features",
+        "topic": "핵심 기능 구성",
+        "ideaType": "feature",
+        "normalizedText": "타깃은 첫 시청자다. 핵심 기능: 출연자 소개 영상은 세로 30초로 제작한다. 기존 예고편 소재만 사용한다. MVP 범위는 인물 2명 소개와 관계 질문 하나다.",
+        "intent": "propose",
+        "confidence": 0.72
+      },
+      {
+        "id": "idea_2",
+        "sourceDraftId": "producer",
+        "sourceModel": "Other",
+        "sourceExcerpt": "타깃은 기존 팬이다. 핵심 기능: 출연자 소개 영상은 가로 3분으로 제작한다. 신규 인터뷰를 촬영한다. MVP 범위에 결말 스포일러를 포함한다.",
+        "sectionKey": "core_features",
+        "topic": "핵심 기능 구성",
+        "ideaType": "feature",
+        "normalizedText": "타깃은 기존 팬이다. 핵심 기능: 출연자 소개 영상은 가로 3분으로 제작한다. 신규 인터뷰를 촬영한다. MVP 범위에 결말 스포일러를 포함한다.",
+        "intent": "propose",
+        "confidence": 0.72
+      }
+    ],
+    "decisionBlocks": [
+      {
+        "id": "decision_1",
+        "sectionKey": "core_features",
+        "topic": "핵심 기능 구성",
+        "selectedOptionId": "option_1_2",
+        "selectionReason": "사용자가 \"타깃은 기존 팬이다. 핵심 기능: 출연자 소개 영상은 가로 3분으로 제작한다. 신규 인터뷰를 촬영한다. MVP 범위에 결말 스포일러를 포함한다.\"을 이 섹션의 선택안으로 적용했습니다.",
+        "confidence": 0.8,
+        "conflictLevel": "none",
+        "needsHumanReview": false,
+        "options": [
+          {
+            "id": "option_1_1",
+            "optionType": "alternative",
+            "content": "타깃은 첫 시청자다. 핵심 기능: 출연자 소개 영상은 세로 30초로 제작한다. 기존 예고편 소재만 사용한다. MVP 범위는 인물 2명 소개와 관계 질문 하나다.",
+            "sourceIdeaIds": [
+              "idea_1"
+            ],
+            "differenceFromSelected": "사용자 변경 전 AI 선택안입니다."
+          },
+          {
+            "id": "option_1_2",
+            "optionType": "selected",
+            "content": "타깃은 기존 팬이다. 핵심 기능: 출연자 소개 영상은 가로 3분으로 제작한다. 신규 인터뷰를 촬영한다. MVP 범위에 결말 스포일러를 포함한다.",
+            "differenceFromSelected": "타깃은 첫 시청자다. 핵심 기능: 출연자 소개 영상은 세로 30초로 제작한다. 기존 예고편 소재만 사용한다. MVP 범위는 인물 2명 소개와 관계 질문 하나다.와 판단 방향이 다릅니다.",
+            "sourceIdeaIds": [
+              "idea_2"
+            ]
+          }
+        ]
+      }
+    ],
+    "finalDocumentSections": [
+      {
+        "sectionKey": "core_features",
+        "title": "핵심 기능",
+        "content": "타깃은 기존 팬이다. 핵심 기능: 출연자 소개 영상은 가로 3분으로 제작한다. 신규 인터뷰를 촬영한다. MVP 범위에 결말 스포일러를 포함한다.",
+        "sourceDecisionBlockIds": [
+          "decision_1"
+        ]
+      }
+    ],
+    "missingSections": [
+      "overview",
+      "problem",
+      "target_user",
+      "pain_points",
+      "solution",
+      "mvp_scope",
+      "user_flow",
+      "requirements",
+      "success_metrics",
+      "risks",
+      "open_questions"
+    ],
+    "warnings": [
+      "분석 API 키가 없어 로컬 규칙으로 정리했습니다. 의미 기반 비교 결과가 아니므로 직접 검토해 주세요.",
+      "로컬 하네스 결과입니다. 실제 모델 호출 전 구조 검증과 화면 연결 확인에 사용합니다."
+    ]
+  },
+  "summary": {
+    "id": "conflicting-proposals",
+    "source": "local_harness",
+    "durationMs": 9,
+    "checks": {
+      "validStructure": true,
+      "originalNotMutated": true,
+      "fallbackRequiresReview": true,
+      "selectionApplied": true,
+      "unrelatedSectionsPreserved": true,
+      "sourceExcerptsExact": true
+    },
+    "conflictBlocks": 0,
+    "missingSections": [
+      "overview",
+      "problem",
+      "target_user",
+      "pain_points",
+      "solution",
+      "mvp_scope",
+      "user_flow",
+      "requirements",
+      "success_metrics",
+      "risks",
+      "open_questions"
+    ],
+    "reviewBlocks": 1
+  }
+}

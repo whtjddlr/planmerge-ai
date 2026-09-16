@@ -1,4 +1,5 @@
 export type GmsConfig = {
+  provider: 'openai' | 'gms';
   apiKey?: string;
   apiUrl: string;
   model: string;
@@ -48,10 +49,12 @@ const DEFAULT_GMS_MODEL = 'gpt-4.1';
 const GMS_REQUEST_TIMEOUT_MS = 60_000;
 
 export function getGmsConfig(): GmsConfig {
+  const direct = process.env.ANALYSIS_PROVIDER === 'openai' || (!process.env.ANALYSIS_PROVIDER && Boolean(process.env.OPENAI_API_KEY));
   return {
-    apiKey: process.env.GMS_API_KEY,
-    apiUrl: process.env.GMS_API_URL ?? DEFAULT_GMS_API_URL,
-    model: process.env.GMS_DEFAULT_MODEL
+    provider: direct ? 'openai' : 'gms',
+    apiKey: direct ? process.env.OPENAI_API_KEY : process.env.GMS_API_KEY,
+    apiUrl: direct ? 'https://api.openai.com/v1/responses' : (process.env.GMS_API_URL ?? DEFAULT_GMS_API_URL),
+    model: (direct ? process.env.OPENAI_ANALYSIS_MODEL : process.env.GMS_DEFAULT_MODEL)
       ?? process.env.MODEL_NAME
       ?? DEFAULT_GMS_MODEL,
   };
@@ -132,10 +135,10 @@ export async function callGmsJson<T>(
   prompt: string,
   options: GmsJsonCallOptions,
 ): Promise<T> {
-  const { apiKey, apiUrl, model } = getGmsConfig();
+  const { apiKey, apiUrl, model, provider } = getGmsConfig();
 
   if (!apiKey) {
-    throw new Error('GMS_API_KEY is missing.');
+    throw new Error('Analysis API key is missing.');
   }
 
   const result = await callResponsesJsonWithMetadata<T>(prompt, {
@@ -143,7 +146,7 @@ export async function callGmsJson<T>(
     apiKey,
     apiUrl,
     model: options.model ?? model,
-    providerLabel: 'GMS API',
+    providerLabel: provider === 'openai' ? 'OpenAI API' : 'GMS API',
     temperature: 0.1,
   });
 

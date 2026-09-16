@@ -59,7 +59,7 @@ export type OpinionClusteringPayload = {
 
 export type OpinionClusteringResult = {
   clusters: OpinionCluster[];
-  source: 'gms' | 'gemini' | 'solar' | 'local_fallback';
+  source: 'openai' | 'gms' | 'gemini' | 'solar' | 'local_fallback';
   model: string;
   warning?: string;
 };

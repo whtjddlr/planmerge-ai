@@ -79,14 +79,14 @@ export type PlanMergeAnalysisPayload = {
 
 export type DraftNormalizeResult = {
   protocolVersion: '0.1';
-  source: 'gms' | 'gemini' | 'solar' | 'local_harness';
+  source: 'openai' | 'gms' | 'gemini' | 'solar' | 'local_harness';
   normalizedIdeas: NormalizedIdea[];
   warnings: string[];
 };
 
 export type PlanMergeAnalysisResult = {
   protocolVersion: '0.1';
-  source: 'gms' | 'gemini' | 'solar' | 'local_harness';
+  source: 'openai' | 'gms' | 'gemini' | 'solar' | 'local_harness';
   normalizedIdeas: NormalizedIdea[];
   decisionBlocks: ProtocolDecisionBlock[];
   finalDocumentSections: ProtocolFinalDocumentSection[];
@@ -717,12 +717,12 @@ export function validatePlanMergeAnalysis(
   }
 
   if (
-    result.source !== 'gms' &&
+    result.source !== 'openai' && result.source !== 'gms' &&
     result.source !== 'gemini' &&
     result.source !== 'solar' &&
     result.source !== 'local_harness'
   ) {
-    errors.push('source must be gms, gemini, solar, or local_harness');
+    errors.push('source must be openai, gms, gemini, solar, or local_harness');
   }
 
   if (!Array.isArray(result.normalizedIdeas)) {
@@ -1071,7 +1071,9 @@ function createLocalDecisionBlocks(forbiddenDirection: string, ideas: Normalized
       selectionReason: '로컬 폴백 규칙으로 금지 방향과 충돌하지 않는 첫 번째 아이디어를 선택했습니다. 실제 기준 부합 여부는 사람이 확인해야 합니다.',
       confidence,
       conflictLevel: conflictOptions.length ? 'medium' : 'none',
-      needsHumanReview: conflictOptions.length > 0 || confidence < 0.65,
+      // A lexical fallback cannot establish semantic agreement or preference.
+      // Its first-option selection is provisional even when no conflict was detected.
+      needsHumanReview: true,
       options,
     };
   });

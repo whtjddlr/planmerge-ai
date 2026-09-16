@@ -59,6 +59,8 @@ merge 프롬프트(`planmergeProtocol.ts`의 `buildMergeNormalizedIdeasPrompt`)�
 
 ## 3. 출력 계약
 
+로컬 폴백은 의미 기반 충돌 판단을 수행하지 않는다. 충돌을 탐지하지 못했더라도 모든 임시 선택을 `needsHumanReview: true`로 반환한다. `conflictLevel: none`은 합의가 검증됐다는 의미가 아니다.
+
 - 항상 프로토콜 v0.1 JSON만 반환한다. 마크다운·산문·코드펜스 금지.
 - `selectedOptionId`는 반드시 `optionType: 'selected'`인 옵션을 가리킨다.
 - 확신이 없거나 특이 상황(지시문 초안, 빈약한 입력 등)은 `warnings`에 한국어로 남긴다. **조용히 넘어가는 것 금지.**

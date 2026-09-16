@@ -44,8 +44,8 @@ export function ProjectSetupPage({ project, onLoadSample, onSave }: ProjectSetup
             <div className="mb-3 text-xs font-medium uppercase tracking-wide text-gray-500">PlanMerge v0.1</div>
             <h2 className="text-2xl text-gray-900">새 병합 프로젝트 만들기</h2>
             <p className="mt-2 max-w-2xl text-sm leading-relaxed text-gray-600">
-              여러 AI 초안을 넣기 전에 목표, 판단 기준, 제외 범위를 먼저 고정합니다.
-              이 기준이 선택안, 대안, 충돌 의견을 가르는 기준선이 됩니다.
+              같은 주제로 작성한 기획 초안들을 비교하고, 사용할 내용을 선택해 하나의 문서로 정리합니다.
+              먼저 목표와 제외할 내용을 입력하세요. 분석 후에는 각 제안의 원문을 확인하고 선택을 바꿀 수 있습니다.
             </p>
           </div>
 

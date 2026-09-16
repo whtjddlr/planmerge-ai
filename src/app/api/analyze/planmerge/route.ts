@@ -507,7 +507,7 @@ export async function POST(request: Request) {
   }
 
   if (!getGmsConfig().apiKey) {
-    return NextResponse.json(buildFallback(payload, 'GMS_API_KEY가 없어 로컬 하네스를 사용했습니다.'));
+    return NextResponse.json(buildFallback(payload, '분석 API 키가 없어 로컬 규칙으로 정리했습니다. 의미 기반 비교 결과가 아니므로 직접 검토해 주세요.'));
   }
 
   try {
@@ -523,7 +523,7 @@ export async function POST(request: Request) {
     if (validation.valid) {
       return NextResponse.json({
         ...mergeResult,
-        source: 'gms',
+        source: getGmsConfig().provider,
       } satisfies PlanMergeAnalysisResult);
     }
 
@@ -540,7 +540,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       ...repairedResult,
-      source: 'gms',
+      source: getGmsConfig().provider,
       warnings: [
         ...repairedResult.warnings,
         '1차 merge 검증 실패 후 repair prompt로 복구했습니다.',
@@ -551,7 +551,7 @@ export async function POST(request: Request) {
     console.error('[analyze/planmerge] GMS analysis failed:', error);
 
     return NextResponse.json(
-      buildFallback(payload, 'GMS 분석 실패로 로컬 하네스를 사용했습니다.'),
+      buildFallback(payload, 'AI 분석 실패로 로컬 규칙을 사용했습니다. 의미 기반 비교 결과가 아니므로 직접 검토해 주세요.'),
     );
   }
 }

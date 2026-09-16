@@ -28,7 +28,7 @@ const analysisPayload = {
 };
 const analysisResult = runLocalPlanMergeHarness(analysisPayload);
 const targetBlock = analysisResult.decisionBlocks.find(
-  (block) => block.conflictLevel !== 'none' || block.needsHumanReview,
+  (block) => block.conflictLevel !== 'none',
 );
 
 assert(targetBlock, 'sample analysis must expose a Decision Room candidate');

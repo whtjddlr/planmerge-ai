@@ -1,5 +1,15 @@
 # PlanMerge
 
+여러 기획 초안을 비교하고, 사용할 의견을 선택해 출처와 함께 하나의 문서로 정리하는 서비스입니다.
+초안 입력 → 의견·대안 확인 → 선택 변경 → 문서 내보내기 순서로 사용합니다.
+
+- [콘텐츠 기획 시나리오와 발견한 한계](docs/experiments/content-planning/README.md)
+- 새 시나리오 재현: `npx tsx scripts/evaluate-content-scenarios.ts`
+- 실제 로컬 API 검증: 서버 실행 후 `npx tsx scripts/evaluate-content-scenarios.ts --live`
+- OpenAI 직접 분석: 로컬 `.env.local`에 `OPENAI_API_KEY`, `ANALYSIS_PROVIDER=openai`, `OPENAI_ANALYSIS_MODEL=gpt-4.1` 설정. 키는 커밋하지 않습니다.
+
+아래는 기존 Build Week 제출 이력과 기술 설명입니다.
+
 > **Git merge for team decisions, not just documents.** PlanMerge combines AI-generated planning drafts into one source-traceable plan, exposes disagreements instead of silently flattening them, and gives people the final say in a Decision Room.
 
 [Live demo](https://planmerge-ai.vercel.app) · [Source](https://github.com/whtjddlr/planmerge-ai) · [Product specification](docs/planmerge-v0.1-spec.md) · [ERD](docs/planmerge-v0.1-erd.mmd)

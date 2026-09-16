@@ -1,0 +1,91 @@
+{
+  "generatedAt": "2026-09-16T02:03:00.931Z",
+  "syntheticInputs": true,
+  "mode": "http-api",
+  "summaries": [
+    {
+      "id": "sparse-brief",
+      "source": "local_harness",
+      "durationMs": 66,
+      "checks": {
+        "validStructure": true,
+        "originalNotMutated": true,
+        "fallbackRequiresReview": true,
+        "selectionApplied": null,
+        "unrelatedSectionsPreserved": true,
+        "sourceExcerptsExact": true
+      },
+      "conflictBlocks": 0,
+      "missingSections": [
+        "problem",
+        "target_user",
+        "pain_points",
+        "solution",
+        "core_features",
+        "mvp_scope",
+        "user_flow",
+        "requirements",
+        "success_metrics",
+        "risks",
+        "open_questions"
+      ],
+      "reviewBlocks": 1
+    },
+    {
+      "id": "conflicting-proposals",
+      "source": "local_harness",
+      "durationMs": 9,
+      "checks": {
+        "validStructure": true,
+        "originalNotMutated": true,
+        "fallbackRequiresReview": true,
+        "selectionApplied": true,
+        "unrelatedSectionsPreserved": true,
+        "sourceExcerptsExact": true
+      },
+      "conflictBlocks": 0,
+      "missingSections": [
+        "overview",
+        "problem",
+        "target_user",
+        "pain_points",
+        "solution",
+        "mvp_scope",
+        "user_flow",
+        "requirements",
+        "success_metrics",
+        "risks",
+        "open_questions"
+      ],
+      "reviewBlocks": 1
+    },
+    {
+      "id": "changed-constraints",
+      "source": "local_harness",
+      "durationMs": 12,
+      "checks": {
+        "validStructure": true,
+        "originalNotMutated": true,
+        "fallbackRequiresReview": true,
+        "selectionApplied": true,
+        "unrelatedSectionsPreserved": true,
+        "sourceExcerptsExact": true
+      },
+      "conflictBlocks": 0,
+      "missingSections": [
+        "overview",
+        "problem",
+        "target_user",
+        "pain_points",
+        "solution",
+        "mvp_scope",
+        "user_flow",
+        "requirements",
+        "success_metrics",
+        "risks",
+        "open_questions"
+      ],
+      "reviewBlocks": 1
+    }
+  ]
+}

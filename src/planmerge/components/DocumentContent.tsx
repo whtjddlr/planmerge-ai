@@ -225,6 +225,7 @@ function qualityLevelLabel(level: QualityLevel) {
 }
 
 function analysisSourceLabel(source: PlanMergeAnalysisResult['source']) {
+  if (source === 'openai') return 'OpenAI';
   if (source === 'gms') {
     return 'GMS';
   }

@@ -16,6 +16,8 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 ## 실행 명령
 
+2026-09-16: 콘텐츠 비교 사례는 `scripts/evaluate-content-scenarios.ts`로 재현한다. 로컬 대체 결과는 의미 기반 판단이 아니므로 모든 블록에서 사람 검토를 요구한다. 분석 API는 `ANALYSIS_PROVIDER=openai`와 `OPENAI_API_KEY`로 OpenAI 직접 연결을 지원하고 실제 제공자명을 반환한다. 별도 영상 워크플로우와 통합된 서비스로 설명하지 않는다.
+
 | 명령 | 역할 | 비고 |
 |---|---|---|
 | `npm ci` | 의존성 설치 | `postinstall`에서 `prisma generate` 자동 실행 |

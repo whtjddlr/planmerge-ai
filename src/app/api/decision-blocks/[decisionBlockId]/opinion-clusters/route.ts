@@ -114,7 +114,7 @@ export async function POST(request: Request, context: RouteContext) {
 
     return NextResponse.json({
       clusters,
-      source: 'gms',
+      source: getGmsConfig().provider,
       model,
     } satisfies OpinionClusteringResult);
   } catch (error) {
