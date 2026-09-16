@@ -70,7 +70,10 @@ This version has breaking changes — APIs, conventions, and file structure may 
    - 키는 워크스페이스 상태(`LocalWorkspaceState`)에 넣지 않는다. 내보내기·공유 스냅샷에 섞이면 안 되므로 별도 localStorage 항목으로 분리해 둔다.
    - 화면에는 `maskApiKey`를 거친 형태만 보여준다.
 8. **시연용 고정값 금지.** 화면에 보이는 수치는 실제 데이터에서 계산한다. 과거에 `verifiedSampleSummary`가 `conflictCount: 1`, `qualityScore: 100`을 상수로 들고 있었고 툴바에는 "3개의 AI 초안에서 42개의 아이디어를 추출했습니다"가 박혀 있었다. 샘플 워크스페이스도 하네스가 만든 병합 결과를 미리 실어 실제 분석과 똑같이 렌더링했다. 이런 값은 분석을 돌리기 전에는 알 수 없으므로 화면에 두지 않는다.
-9. **금지 방향 판정은 모델이 한다.** `NormalizedIdea.forbiddenDirectionConflict`(`conflicts`/`reason`/`evidence`)는 정규화 단계에서 모델이 한 번 내린 판정이고, 병합·서버 복구·Decision Room 안전 게이트가 모두 이 값을 읽는다. 누락되면 검증이 실패해야 하며 기본값으로 메우지 않는다 — 기본값 `false`는 금지 방향 제안을 조용히 통과시킨다. `judgeForbiddenDirectionByKeywords`는 하네스 픽스처 전용이므로 제품 경로에서 호출하지 않는다.
+9. **금지 방향 위반은 Quality Gate를 차단한다.** `analysisQuality.ts`는 선택안의 근거 아이디어가 `forbiddenDirectionConflict.conflicts`인 블록을 세어 `forbidden_direction_compliance` 메트릭과 `blocked` finding을 만들고, 등급을 스키마 오류와 같은 하드 블록으로 내린다. 평균에 희석되게 두면 12개 중 1건 위반이 100점 Ready로 나온다(실제로 그랬다).
+   - 사람이 충돌 의견을 선택안으로 덮어쓰는 것은 정당한 권한이지만 위반을 해소하지는 않는다. `applyDecisionOptionOverride`는 충돌 옵션을 선택하면 `needsHumanReview`를 유지한다.
+   - 차단 문구는 실제 사유를 말한다. "구조 오류 또는 근거 부족"으로 뭉뚱그리면 사용자가 엉뚱한 곳을 고치러 간다.
+10. **금지 방향 판정은 모델이 한다.** `NormalizedIdea.forbiddenDirectionConflict`(`conflicts`/`reason`/`evidence`)는 정규화 단계에서 모델이 한 번 내린 판정이고, 병합·서버 복구·Decision Room 안전 게이트가 모두 이 값을 읽는다. 누락되면 검증이 실패해야 하며 기본값으로 메우지 않는다 — 기본값 `false`는 금지 방향 제안을 조용히 통과시킨다. `judgeForbiddenDirectionByKeywords`는 하네스 픽스처 전용이므로 제품 경로에서 호출하지 않는다.
 
 ## PR 전 체크리스트
 

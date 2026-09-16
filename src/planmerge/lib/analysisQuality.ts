@@ -131,6 +131,22 @@ export function evaluateAnalysisQuality(
     ideasByDraft.set(idea.sourceDraftId, (ideasByDraft.get(idea.sourceDraftId) ?? 0) + 1);
   });
 
+  // 금지 방향을 위반하는 선택안이 하나라도 있으면 그 기획서는 "준비됨"이 아니다.
+  // 사람이 의도적으로 충돌 의견을 선택안으로 덮어쓸 수 있는데(그건 사람의 권한이다),
+  // 그 순간 위반이 화면에서 사라지면 안 된다. 선택안이 바뀌어도 근거 아이디어의
+  // 판정은 남아 있으므로 그것으로 측정한다.
+  const ideasById = new Map(result.normalizedIdeas.map((idea) => [idea.id, idea]));
+  const forbiddenSelections = result.decisionBlocks.filter((block) => {
+    const selected = block.options.find((option) => option.id === block.selectedOptionId);
+
+    return (selected?.sourceIdeaIds ?? []).some((ideaId) => {
+      const idea = ideasById.get(ideaId);
+
+      // 리스크 경고는 금지 방향 제안이 아니다.
+      return idea?.forbiddenDirectionConflict.conflicts === true && idea.intent !== 'warn';
+    });
+  });
+
   const decisionOptions = result.decisionBlocks.flatMap((block) => block.options);
   const optionsWithSources = decisionOptions.filter((option) => option.sourceIdeaIds.length > 0);
   const blocksWithSelectedOption = result.decisionBlocks.filter((block) =>
@@ -193,7 +209,27 @@ export function evaluateAnalysisQuality(
       Math.max(result.finalDocumentSections.length, 1),
       '최종 문서 섹션이 빈 문장이나 너무 짧은 문장으로 끝나지 않는지 봅니다.',
     ),
+    metric(
+      'forbidden_direction_compliance',
+      'Forbidden Direction',
+      result.decisionBlocks.length - forbiddenSelections.length,
+      Math.max(result.decisionBlocks.length, 1),
+      '선택안이 프로젝트가 금지한 방향을 제안하고 있지 않은지 봅니다.',
+      // 한 건이라도 위반이면 즉시 blocked가 되도록 임계값을 올린다.
+      100,
+    ),
   ];
+
+  if (forbiddenSelections.length) {
+    findings.push({
+      id: 'forbidden_direction_selected',
+      severity: 'blocked',
+      title: '금지 방향이 선택안에 포함됨',
+      detail: `${forbiddenSelections.length}개 결정의 선택안이 프로젝트가 금지한 방향을 제안합니다: ${
+        forbiddenSelections.map((block) => block.topic).join(', ')
+      }. 사람이 직접 선택한 경우라도 기준을 바꿀지 선택안을 바꿀지 확정해야 합니다.`,
+    });
+  }
 
   if (!validation.valid) {
     findings.push({
@@ -279,7 +315,14 @@ export function evaluateAnalysisQuality(
   let score = weightedScore;
   let level = validation.valid ? levelFromScore(score) : 'blocked';
 
-  if (!validation.valid || inputDraftCount === 0 || !hasAnalysisContent) {
+  // 금지 방향 위반은 평균에 희석되면 안 된다. 기획서가 자기 제약을 어기고 있다는 것은
+  // 이 도구가 막아야 하는 단 하나의 상태이므로 스키마 오류와 같은 등급으로 막는다.
+  if (
+    !validation.valid
+    || inputDraftCount === 0
+    || !hasAnalysisContent
+    || forbiddenSelections.length > 0
+  ) {
     score = Math.min(score, 45);
     level = 'blocked';
   } else {
@@ -314,7 +357,7 @@ export function evaluateAnalysisQuality(
   return {
     score,
     level,
-    summary: qualitySummary(level),
+    summary: qualitySummary(level, forbiddenSelections.length),
     metrics,
     findings,
     nextActions,
@@ -543,7 +586,13 @@ function conflictLevelLabel(level: PlanMergeAnalysisResult['decisionBlocks'][num
   return '없음';
 }
 
-function qualitySummary(level: QualityLevel) {
+// 차단 사유를 뭉뚱그리면 사용자는 엉뚱한 곳을 고치러 간다. 금지 방향 위반은
+// 구조 오류와 성격이 달라서 따로 말해 준다.
+function qualitySummary(level: QualityLevel, forbiddenSelectionCount: number) {
+  if (forbiddenSelectionCount > 0) {
+    return `선택안 ${forbiddenSelectionCount}건이 프로젝트가 금지한 방향을 제안하고 있어 내보낼 수 없습니다. 선택안을 바꾸거나 금지 방향 기준을 고쳐 주세요.`;
+  }
+
   if (level === 'ready') {
     return '기본 구조, 근거 추적, 문서 완성도가 충분합니다. 충돌 항목만 확인하면 공유 가능한 상태입니다.';
   }

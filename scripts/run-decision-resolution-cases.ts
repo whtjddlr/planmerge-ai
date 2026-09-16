@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { applyDecisionResolutionProposal } from '../src/planmerge/lib/analysisOverride';
+import { applyDecisionOptionOverride, applyDecisionResolutionProposal } from '../src/planmerge/lib/analysisOverride';
+import { evaluateAnalysisQuality } from '../src/planmerge/lib/analysisQuality';
 import {
   buildDecisionResolutionPrompt,
   createDecisionResolutionPayload,
@@ -436,6 +437,64 @@ const cases: Array<{ id: string; run: () => string }> = [
       );
 
       return 'a decision resting only on assumptions is flagged; proposal-backed blocks are untouched';
+    },
+  },
+  {
+    id: 'human-override-keeps-forbidden-violation-visible',
+    run: () => {
+      // 사람이 충돌 의견을 선택안으로 올리는 것은 정당한 권한이다. 하지만 선택했다는
+      // 사실이 금지 방향 위반을 해소하지는 않는다. 위반이 화면에서 사라지면 기획서가
+      // 조용히 금지된 방향으로 흘러간다.
+      const blockWithConflict = analysisResult.decisionBlocks.find((block) => (
+        block.options.some((option) => (
+          option.optionType === 'conflict'
+          && option.sourceIdeaIds.some((ideaId) => {
+            const idea = ideasById.get(ideaId);
+            return Boolean(idea) && conflictsWithForbiddenDirection(idea!);
+          })
+        ))
+      ));
+
+      assert(blockWithConflict, 'sample analysis must expose a forbidden-direction conflict option');
+
+      const conflictOption = blockWithConflict.options.find((option) => option.optionType === 'conflict')!;
+
+      // 하네스 픽스처는 모든 아이디어가 충돌인 섹션에서 첫 아이디어로 폴백하므로
+      // 베이스라인이 이미 위반을 포함할 수 있다. 여기서 볼 것은 "사람이 충돌 의견을
+      // 선택한 뒤에도 위반이 계속 보이는가"다.
+      const overridden = applyDecisionOptionOverride(
+        analysisResult,
+        blockWithConflict.id,
+        conflictOption.id,
+      );
+
+      // 사람의 선택은 반영된다.
+      const overriddenBlock = overridden.decisionBlocks.find((block) => block.id === blockWithConflict.id)!;
+      assert.equal(
+        overriddenBlock.selectedOptionId,
+        conflictOption.id,
+        'the human choice must be applied',
+      );
+
+      // 그러나 검토 상태와 게이트 경고는 남아야 한다.
+      assert.equal(
+        overriddenBlock.needsHumanReview,
+        true,
+        'overriding to a conflict option must keep the block under review',
+      );
+
+      const after = evaluateAnalysisQuality(analysisPayload, overridden);
+      const finding = after.findings.find((entry) => entry.id === 'forbidden_direction_selected');
+
+      assert(finding, 'the quality gate must report that a forbidden direction is now selected');
+      assert.equal(finding.severity, 'blocked', 'a forbidden selection is a blocking finding');
+      assert.notEqual(
+        after.level,
+        'ready',
+        'a plan whose selection violates the forbidden direction is never ready',
+      );
+
+      return 'a human may pick a forbidden option, but the violation stays visible and blocks readiness';
     },
   },
 ];

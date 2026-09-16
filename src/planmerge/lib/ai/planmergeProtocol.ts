@@ -1127,7 +1127,10 @@ export function judgeForbiddenDirectionByKeywords(
   const keywordGroups = [
     ['실시간 공동 편집', '공동 편집'],
     ['외부 문서 연동', '문서 연동', 'notion'],
-    ['slack', '공유'],
+    // '공유'를 Slack의 동의어로 묶으면 "공유 가능한 정리본으로 내보낸다"가
+    // Slack 연동 제안으로 오탐된다. 제품 코드가 아니라 픽스처라도 틀린 등가는 두지 않는다.
+    ['slack'],
+    ['notion'],
     ['팀 초대', '초대'],
     ['연동'],
   ];

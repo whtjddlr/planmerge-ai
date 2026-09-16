@@ -29,9 +29,17 @@ export function applyDecisionOptionOverride(
   const nextTargetBlock = nextDecisionBlocks.find((block) => block.id === decisionBlockId) ?? targetBlock;
   const nextSelectedOption = nextTargetBlock.options.find((option) => option.id === nextTargetBlock.selectedOptionId);
 
+  // 사람이 충돌 의견을 선택안으로 올린 것은 정당한 권한이지만, 그 결정이 검토를
+  // 마친 상태로 보이면 안 된다. 선택했다는 사실이 위반을 해소하지는 않는다.
+  const overrodeConflict = targetOption.optionType === 'conflict';
+
   return {
     ...analysisResult,
-    decisionBlocks: nextDecisionBlocks,
+    decisionBlocks: overrodeConflict
+      ? nextDecisionBlocks.map((block) => (
+        block.id === decisionBlockId ? { ...block, needsHumanReview: true } : block
+      ))
+      : nextDecisionBlocks,
     finalDocumentSections: updateFinalDocumentSection(
       analysisResult,
       nextTargetBlock.sectionKey,
