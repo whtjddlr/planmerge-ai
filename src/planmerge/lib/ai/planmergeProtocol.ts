@@ -512,9 +512,6 @@ export function buildMergeNormalizedIdeasPrompt(
     'Valid sourceIdeaIds (use these exact strings, nothing else):',
     JSON.stringify(normalizedIdeas.map((idea) => idea.id)),
     '',
-    'Normalized ideas (input only — reference by id, do not repeat in your output):',
-    JSON.stringify(normalizedIdeas),
-    '',
     'Return shape:',
     JSON.stringify({
       protocolVersion: '0.3',
@@ -562,7 +559,9 @@ export function buildMergeNormalizedIdeasPrompt(
     'Project and drafts:',
     JSON.stringify(payload),
     '',
-    'Normalized ideas:',
+    // 입력 전용이다. 출력에 되돌려주면 예산만 쓰고 서버가 버린다(규칙 2).
+    // 프롬프트 안에서 한 번만 직렬화한다 — 두 번 넣으면 호출마다 3천 토큰이 낭비된다.
+    'Normalized ideas (input only — reference by id, do not repeat in your output):',
     JSON.stringify(normalizedIdeas),
   ].join('\n');
 }
