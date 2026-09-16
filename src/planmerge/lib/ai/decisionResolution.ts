@@ -555,7 +555,7 @@ export function createNonApplicableDecisionResolution(
       supportingOptionIds: [],
       synthesizedDecision: null,
       revisedSectionContent: null,
-      selectionReason: '검증된 GPT-5.6 응답이 없어 현재 선택과 출처를 그대로 유지합니다.',
+      selectionReason: '검증된 모델 응답이 없어 현재 선택과 출처를 그대로 유지합니다.',
       addressedOpinionIds: [],
       clarifyingQuestion: '이 결정을 확정할 때 프로젝트 목표와 금지 방향 중 가장 우선해야 할 기준은 무엇인가요?',
       unresolvedRisks: ['모델 응답이 없거나 구조 검증을 통과하지 못했습니다.'],

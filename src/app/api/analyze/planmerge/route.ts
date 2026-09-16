@@ -23,8 +23,13 @@ import type {
   ProtocolDecisionOption,
   ProtocolFinalDocumentSection,
 } from '@/planmerge/lib/ai/planmergeProtocol';
-import { callGmsJson, getAnalysisConfig } from '@/planmerge/lib/ai/gmsServer';
-import type { GmsConfig } from '@/planmerge/lib/ai/gmsServer';
+import {
+  addModelUsage,
+  callGmsJson,
+  emptyModelUsage,
+  getAnalysisConfig,
+} from '@/planmerge/lib/ai/gmsServer';
+import type { GmsConfig, ModelUsage } from '@/planmerge/lib/ai/gmsServer';
 import { checkRateLimit, getClientKey } from '@/server/rateLimit';
 
 // 초안 30개 × normalize 1회 + merge까지 한 요청 안에서 끝나야 한다. 플랫폼 기본
@@ -114,7 +119,23 @@ async function mapWithConcurrency<TItem, TResult>(
   return results;
 }
 
-async function normalizeDrafts(payload: PlanMergeAnalysisPayload, config: GmsConfig) {
+/**
+ * 토큰 사용량은 프로토콜 본문이 아니라 응답 헤더로 알린다.
+ *
+ * 사용자 키로 돌아가는 제품이라 "이번 분석이 얼마를 썼는지"는 보여줘야 하지만,
+ * 그렇다고 분석 결과 스키마에 전송 메타데이터를 섞으면 프로토콜 버전을 올려야 한다.
+ */
+const USAGE_HEADER = 'x-planmerge-usage';
+
+function usageHeaders(usage: ModelUsage) {
+  return { [USAGE_HEADER]: JSON.stringify(usage) };
+}
+
+async function normalizeDrafts(
+  payload: PlanMergeAnalysisPayload,
+  config: GmsConfig,
+  onUsage: (usage: ModelUsage) => void,
+) {
   const drafts = payload.drafts.filter((draft) => draft.rawText.trim());
 
   const normalizeResults = await mapWithConcurrency(
@@ -123,7 +144,7 @@ async function normalizeDrafts(payload: PlanMergeAnalysisPayload, config: GmsCon
     async (draft, signal) => {
       const rawResult = await callGmsJson<DraftNormalizeResult>(
         buildDraftNormalizePrompt(payload.project, draft),
-        { maxOutputTokens: 4000, signal, config },
+        { maxOutputTokens: 4000, signal, config, onUsage },
       );
       const result = normalizeDraftProtocolResult(draft, rawResult);
       const validation = validateDraftNormalizeResult(draft, result);
@@ -576,26 +597,34 @@ export async function POST(request: Request) {
     );
   }
 
+  let usage = emptyModelUsage();
+  const collectUsage = (next: ModelUsage) => {
+    usage = addModelUsage(usage, next);
+  };
+
   try {
-    const normalizedIdeas = await normalizeDrafts(payload, config);
+    const normalizedIdeas = await normalizeDrafts(payload, config, collectUsage);
     const mergePrompt = buildMergeNormalizedIdeasPrompt(payload, normalizedIdeas);
     const mergeResultRaw = await callGmsJson<PlanMergeAnalysisResult>(
       mergePrompt,
-      { maxOutputTokens: MERGE_MAX_OUTPUT_TOKENS, config },
+      { maxOutputTokens: MERGE_MAX_OUTPUT_TOKENS, config, onUsage: collectUsage },
     );
     const mergeResult = postProcessMergeResult(payload, mergeResultRaw, normalizedIdeas);
     const validation = validatePlanMergeAnalysis(payload, mergeResult);
 
     if (validation.valid) {
-      return NextResponse.json({
-        ...mergeResult,
-        source: config.provider,
-      } satisfies PlanMergeAnalysisResult);
+      return NextResponse.json(
+        {
+          ...mergeResult,
+          source: config.provider,
+        } satisfies PlanMergeAnalysisResult,
+        { headers: usageHeaders(usage) },
+      );
     }
 
     const repairedResultRaw = await callGmsJson<PlanMergeAnalysisResult>(
       buildPlanMergeRepairPrompt(payload, mergeResult, validation.errors, normalizedIdeas),
-      { maxOutputTokens: MERGE_MAX_OUTPUT_TOKENS, config },
+      { maxOutputTokens: MERGE_MAX_OUTPUT_TOKENS, config, onUsage: collectUsage },
     );
     const repairedResult = postProcessMergeResult(payload, repairedResultRaw, normalizedIdeas);
     const repairValidation = validatePlanMergeAnalysis(payload, repairedResult);
@@ -604,14 +633,17 @@ export async function POST(request: Request) {
       throw new Error(`Repair validation failed: ${repairValidation.errors.join(', ')}`);
     }
 
-    return NextResponse.json({
-      ...repairedResult,
-      source: config.provider,
-      warnings: [
-        ...repairedResult.warnings,
-        '1차 merge 검증 실패 후 repair prompt로 복구했습니다.',
-      ],
-    } satisfies PlanMergeAnalysisResult);
+    return NextResponse.json(
+      {
+        ...repairedResult,
+        source: config.provider,
+        warnings: [
+          ...repairedResult.warnings,
+          '1차 merge 검증 실패 후 repair prompt로 복구했습니다.',
+        ],
+      } satisfies PlanMergeAnalysisResult,
+      { headers: usageHeaders(usage) },
+    );
   } catch (error) {
     // 업스트림 오류 본문에는 게이트웨이 내부 정보가 섞일 수 있어 서버 로그에만 남긴다.
     console.error('[analyze/planmerge] analysis failed:', error);

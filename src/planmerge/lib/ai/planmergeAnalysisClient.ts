@@ -32,9 +32,50 @@ export class AnalysisFailureError extends Error {
   }
 }
 
+export type AnalysisTokenUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  calls: number;
+};
+
+export type AnalysisRun = {
+  result: PlanMergeAnalysisResult;
+  /** 서버가 헤더로 알려준 토큰 사용량. 헤더가 없으면 undefined. */
+  usage?: AnalysisTokenUsage;
+};
+
+/** 사용량 헤더는 없거나 깨져 있을 수 있다. 그 경우 분석 자체를 실패시키지 않는다. */
+function readUsageHeader(response: Response): AnalysisTokenUsage | undefined {
+  const raw = response.headers.get('x-planmerge-usage');
+
+  if (!raw) {
+    return undefined;
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(raw);
+
+    if (!isRecord(parsed)) {
+      return undefined;
+    }
+
+    const read = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
+
+    return {
+      inputTokens: read(parsed.inputTokens),
+      outputTokens: read(parsed.outputTokens),
+      reasoningTokens: read(parsed.reasoningTokens),
+      calls: read(parsed.calls),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 export async function generatePlanMergeAnalysis(
   payload: PlanMergeAnalysisPayload,
-): Promise<PlanMergeAnalysisResult> {
+): Promise<AnalysisRun> {
   let response: Response;
 
   try {
@@ -60,6 +101,7 @@ export async function generatePlanMergeAnalysis(
     throw await createAnalysisFailure(response);
   }
 
+  const usage = readUsageHeader(response);
   let result: PlanMergeAnalysisResult;
 
   try {
@@ -84,7 +126,7 @@ export async function generatePlanMergeAnalysis(
     );
   }
 
-  return result;
+  return { result, ...(usage ? { usage } : {}) };
 }
 
 async function createAnalysisFailure(response: Response) {

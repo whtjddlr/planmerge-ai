@@ -68,6 +68,13 @@ export type LocalWorkspaceSession = {
   activeWorkspaceId: string;
   registry: LocalWorkspaceMetadata[];
   state: LocalWorkspaceState;
+  /**
+   * 저장된 상태를 읽다가 버린 것이 있으면 여기에 담는다.
+   *
+   * 프로토콜 버전이 올라가면 이전에 저장된 analysisResult는 검증을 통과하지 못해
+   * 제외되는데, 아무 말 없이 사라지면 사용자는 병합 결과가 왜 없어졌는지 알 수 없다.
+   */
+  warnings?: string[];
 };
 
 export type LocalWorkspaceWriteResult =
@@ -657,9 +664,14 @@ function createWorkspaceMetadata(
   };
 }
 
-function sanitizeStoredWorkspaceState(value: unknown): LocalWorkspaceState {
+type StoredWorkspaceParseResult = {
+  state: LocalWorkspaceState;
+  warnings: string[];
+};
+
+function sanitizeStoredWorkspaceState(value: unknown): StoredWorkspaceParseResult {
   if (!isRecord(value)) {
-    return createEmptyWorkspaceState();
+    return { state: createEmptyWorkspaceState(), warnings: [] };
   }
 
   const analysisRunId = typeof value.analysisRunId === 'number' && Number.isFinite(value.analysisRunId)
@@ -671,26 +683,35 @@ function sanitizeStoredWorkspaceState(value: unknown): LocalWorkspaceState {
     : [];
   const analysisResult = sanitizeAnalysisResult(value.analysisResult, project, storedDrafts);
 
+  const warnings: string[] = [];
+
+  if (value.analysisResult !== undefined && !analysisResult) {
+    warnings.push('저장된 병합 결과가 현재 분석 프로토콜과 맞지 않아 제외했습니다. 초안은 그대로 있으니 분석을 다시 실행해 주세요.');
+  }
+
   return {
-    analysisRunId,
-    project,
-    drafts: storedDrafts,
-    analysisResult,
-    approvedBlockIds: sanitizeApprovedBlockIds(value.approvedBlockIds, analysisResult),
-    decisionLogs: (Array.isArray(value.decisionLogs) ? value.decisionLogs : [])
-      .filter(isValidDecisionLog)
-      .map((log) => ({
-        ...log,
-        analysisRunId: log.analysisRunId ?? analysisRunId,
-      })),
+    state: {
+      analysisRunId,
+      project,
+      drafts: storedDrafts,
+      analysisResult,
+      approvedBlockIds: sanitizeApprovedBlockIds(value.approvedBlockIds, analysisResult),
+      decisionLogs: (Array.isArray(value.decisionLogs) ? value.decisionLogs : [])
+        .filter(isValidDecisionLog)
+        .map((log) => ({
+          ...log,
+          analysisRunId: log.analysisRunId ?? analysisRunId,
+        })),
+    },
+    warnings,
   };
 }
 
-function parseStoredWorkspaceState(rawState: string): LocalWorkspaceState {
+function parseStoredWorkspaceState(rawState: string): StoredWorkspaceParseResult {
   try {
     return sanitizeStoredWorkspaceState(JSON.parse(rawState) as unknown);
   } catch {
-    return createEmptyWorkspaceState();
+    return { state: createEmptyWorkspaceState(), warnings: [] };
   }
 }
 
@@ -705,7 +726,7 @@ function migrateLegacyWorkspaceState(): LocalWorkspaceSession | null {
     return null;
   }
 
-  const state = parseStoredWorkspaceState(rawLegacyState);
+  const { state, warnings } = parseStoredWorkspaceState(rawLegacyState);
   const workspaceId = createWorkspaceId();
   const metadata = createWorkspaceMetadata(workspaceId, state, new Date().toISOString(), '기존 워크스페이스');
   const registry = upsertWorkspaceMetadata(readWorkspaceRegistry({ persistCleanup: true }), metadata);
@@ -720,6 +741,7 @@ function migrateLegacyWorkspaceState(): LocalWorkspaceSession | null {
       activeWorkspaceId: workspaceId,
       registry,
       state,
+      ...(warnings.length ? { warnings } : {}),
     };
   } catch (error) {
     // 새 슬롯 저장에 실패하면 legacy 키를 남겨 다음 로드에서 다시 마이그레이션한다.
@@ -730,6 +752,7 @@ function migrateLegacyWorkspaceState(): LocalWorkspaceSession | null {
       activeWorkspaceId: workspaceId,
       registry,
       state,
+      ...(warnings.length ? { warnings } : {}),
     };
   }
 }
@@ -746,8 +769,13 @@ function createDefaultWorkspaceSession(): LocalWorkspaceSession {
 }
 
 export function loadWorkspaceState(workspaceId: string): LocalWorkspaceState | null {
+  return loadWorkspaceStateWithWarnings(workspaceId)?.state ?? null;
+}
+
+/** 저장된 상태를 읽으면서 버린 것이 있으면 함께 알려준다. */
+export function loadWorkspaceStateWithWarnings(workspaceId: string): StoredWorkspaceParseResult | null {
   if (typeof window === 'undefined') {
-    return createEmptyWorkspaceState();
+    return { state: createEmptyWorkspaceState(), warnings: [] };
   }
 
   const rawState = window.localStorage.getItem(workspaceBodyStorageKey(workspaceId));
@@ -792,15 +820,16 @@ export function loadLocalWorkspaceSession({
   activeWorkspaceId ??= registry[0]?.id ?? null;
 
   if (activeWorkspaceId) {
-    const state = loadWorkspaceState(activeWorkspaceId);
+    const loaded = loadWorkspaceStateWithWarnings(activeWorkspaceId);
 
-    if (state) {
+    if (loaded) {
       window.localStorage.setItem(ACTIVE_WORKSPACE_STORAGE_KEY, activeWorkspaceId);
 
       return {
         activeWorkspaceId,
         registry,
-        state,
+        state: loaded.state,
+        ...(loaded.warnings.length ? { warnings: loaded.warnings } : {}),
       };
     }
 

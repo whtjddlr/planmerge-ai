@@ -92,7 +92,7 @@ function sectionSelectsForbiddenDirection(
         const idea = ideasById.get(ideaId);
 
         // 리스크 경고는 금지 방향 제안이 아니다.
-        return idea?.forbiddenDirectionConflict.conflicts === true && idea.intent !== 'warn';
+        return idea?.forbiddenDirectionConflict?.conflicts === true && idea.intent !== 'warn';
       });
     });
 }
@@ -147,7 +147,7 @@ function createDecisionTraceFromBlock(
         ? { label: '검토 필요', variant: 'warning' as const }
         : {
           label: primaryBlock.selectionReason.startsWith('GPT-5.6 consensus:')
-            ? 'GPT-5.6 합의'
+            ? 'AI 합의'
             : primaryBlock.selectionReason.startsWith('사용자가 ')
               ? '사용자 선택'
               : '자동 선택',

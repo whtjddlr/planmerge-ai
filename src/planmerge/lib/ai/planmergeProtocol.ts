@@ -17,6 +17,14 @@ export const documentSectionDefinitions = [
 
 export type DocumentSectionKey = typeof documentSectionDefinitions[number]['key'];
 
+/**
+ * 한 번에 분석할 수 있는 초안 수 상한.
+ *
+ * 서버 검증과 화면 안내가 같은 값을 써야 한다. 따로 두면 한쪽만 바뀌어도
+ * 사용자는 저장은 되는데 분석에서 거절되는 상태를 만나게 된다.
+ */
+export const MAX_ANALYSIS_DRAFT_COUNT = 30;
+
 export type NormalizedIdeaType =
   | 'problem'
   | 'target_user'
@@ -273,8 +281,8 @@ export function parsePlanMergeAnalysisPayload(input: unknown): PayloadParseResul
   const drafts: LocalDraftSubmission[] = [];
 
   if (Array.isArray(draftsInput)) {
-    if (draftsInput.length > 30) {
-      errors.push('drafts must include 30 items or fewer');
+    if (draftsInput.length > MAX_ANALYSIS_DRAFT_COUNT) {
+      errors.push(`drafts must include ${MAX_ANALYSIS_DRAFT_COUNT} items or fewer`);
     }
 
     draftsInput.forEach((draftInput, index) => {
@@ -1071,7 +1079,16 @@ export function conflictsWithForbiddenDirection(idea: NormalizedIdea) {
     return false;
   }
 
-  return idea.forbiddenDirectionConflict.conflicts === true;
+  // 세 로드 경로가 모두 검증을 거치므로 판정이 없는 아이디어는 화면까지 오지 않는다.
+  // 그래도 옵셔널 체이닝으로 읽는다. 판정이 없다는 것이 "충돌 아님"을 뜻하지는 않지만,
+  // 여기서 true를 돌려주면 근거 없이 위반이라고 주장하게 된다. 판정 누락 자체는
+  // Quality Gate가 별도 항목으로 잡는다.
+  return idea.forbiddenDirectionConflict?.conflicts === true;
+}
+
+/** 프로토콜 v0.2 판정이 실제로 들어 있는가. 버전 이전 데이터를 가려낸다. */
+export function hasForbiddenDirectionJudgement(idea: NormalizedIdea) {
+  return typeof idea.forbiddenDirectionConflict?.conflicts === 'boolean';
 }
 
 /**

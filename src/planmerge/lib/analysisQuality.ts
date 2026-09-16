@@ -1,4 +1,5 @@
 import {
+  hasForbiddenDirectionJudgement,
   documentSectionDefinitions,
   validatePlanMergeAnalysis,
 } from './ai/planmergeProtocol';
@@ -143,9 +144,15 @@ export function evaluateAnalysisQuality(
       const idea = ideasById.get(ideaId);
 
       // 리스크 경고는 금지 방향 제안이 아니다.
-      return idea?.forbiddenDirectionConflict.conflicts === true && idea.intent !== 'warn';
+      return idea?.forbiddenDirectionConflict?.conflicts === true && idea.intent !== 'warn';
     });
   });
+
+  // 프로토콜 v0.2 이전 데이터가 어떤 경로로든 들어오면 금지 방향을 판정할 수 없다.
+  // 판정할 수 없다는 사실을 "위반 없음"으로 읽히게 두지 않는다.
+  const ideasMissingJudgement = result.normalizedIdeas.filter(
+    (idea) => !hasForbiddenDirectionJudgement(idea),
+  );
 
   const decisionOptions = result.decisionBlocks.flatMap((block) => block.options);
   const optionsWithSources = decisionOptions.filter((option) => option.sourceIdeaIds.length > 0);
@@ -219,6 +226,15 @@ export function evaluateAnalysisQuality(
       100,
     ),
   ];
+
+  if (ideasMissingJudgement.length) {
+    findings.push({
+      id: 'forbidden_direction_judgement_missing',
+      severity: 'blocked',
+      title: '금지 방향 판정 없음',
+      detail: `${ideasMissingJudgement.length}개 아이디어에 금지 방향 판정이 없습니다. 이전 프로토콜로 만든 결과이므로 분석을 다시 실행해야 기준 위반을 확인할 수 있습니다.`,
+    });
+  }
 
   if (forbiddenSelections.length) {
     findings.push({
@@ -322,6 +338,7 @@ export function evaluateAnalysisQuality(
     || inputDraftCount === 0
     || !hasAnalysisContent
     || forbiddenSelections.length > 0
+    || ideasMissingJudgement.length > 0
   ) {
     score = Math.min(score, 45);
     level = 'blocked';

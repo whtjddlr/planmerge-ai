@@ -8,6 +8,7 @@ type ToolbarProps = {
   approvalStatus: 'pending' | 'approved';
   analysisStatus: 'idle' | 'analyzing' | 'completed';
   canRevokeSharedWorkspace: boolean;
+  analysisUsage?: { inputTokens: number; outputTokens: number; calls: number } | null;
   draftCount: number;
   hasMergeResult: boolean;
   normalizedIdeaCount: number;
@@ -62,6 +63,7 @@ export function Toolbar({
   approvalStatus,
   analysisStatus,
   canRevokeSharedWorkspace,
+  analysisUsage,
   draftCount,
   hasMergeResult,
   normalizedIdeaCount,
@@ -119,7 +121,7 @@ export function Toolbar({
       ? `프로젝트 / ${projectTitle.trim() || '새 프로젝트'}`
       : viewCopy[activeView].breadcrumb,
     subtitle: activeView === 'merge'
-      ? getMergeSubtitle(draftCount, normalizedIdeaCount, hasMergeResult)
+      ? getMergeSubtitle(draftCount, normalizedIdeaCount, hasMergeResult, analysisUsage)
       : activeView === 'inspector'
         ? `${draftCount}개의 초안을 기준으로 분석 구조를 검사합니다`
         : activeView === 'drafts' && sharedMode
@@ -240,7 +242,12 @@ export function Toolbar({
   );
 }
 
-function getMergeSubtitle(draftCount: number, normalizedIdeaCount: number, hasMergeResult: boolean) {
+function getMergeSubtitle(
+  draftCount: number,
+  normalizedIdeaCount: number,
+  hasMergeResult: boolean,
+  analysisUsage?: { inputTokens: number; outputTokens: number; calls: number } | null,
+) {
   if (!draftCount) {
     return '프로젝트 설정 후 AI 초안을 입력하면 병합 결과가 생성됩니다';
   }
@@ -249,5 +256,14 @@ function getMergeSubtitle(draftCount: number, normalizedIdeaCount: number, hasMe
     return `${draftCount}개 초안이 준비되었습니다. 병합 분석을 실행해 주세요`;
   }
 
-  return `${draftCount}개 초안에서 ${normalizedIdeaCount}개 아이디어를 추출했습니다`;
+  const base = `${draftCount}개 초안에서 ${normalizedIdeaCount}개 아이디어를 추출했습니다`;
+
+  // 사용자 키로 돌아갈 수 있으므로 이번 분석이 쓴 토큰을 함께 보여준다.
+  if (!analysisUsage?.calls) {
+    return base;
+  }
+
+  const tokens = (analysisUsage.inputTokens + analysisUsage.outputTokens).toLocaleString('ko-KR');
+
+  return `${base} · 모델 호출 ${analysisUsage.calls}회, 토큰 ${tokens}`;
 }

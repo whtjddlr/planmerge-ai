@@ -56,7 +56,7 @@ export function ConsensusPatchPanel({
             </StatusBadge>
           </div>
           <p className="mt-1 text-xs leading-relaxed text-gray-500">
-            GPT-5.6이 원문 근거와 팀 피드백을 비교해 이 결정만 다시 병합합니다.
+            합의 모델이 원문 근거와 팀 피드백을 비교해 이 결정만 다시 병합합니다.
           </p>
         </div>
         {resolution && (
@@ -111,7 +111,7 @@ export function ConsensusPatchPanel({
               className="w-full rounded-md border border-gray-300 px-3 py-2 text-xs text-gray-700 transition-colors hover:bg-gray-50"
               onClick={onRequest}
             >
-              Ask GPT-5.6 again
+              합의안 다시 요청
             </button>
           )}
         </div>
@@ -126,7 +126,7 @@ export function ConsensusPatchPanel({
             className="mt-3 w-full rounded-md bg-blue-600 px-3 py-2.5 text-sm text-white transition-colors hover:bg-blue-700"
             onClick={onRequest}
           >
-            Ask GPT-5.6
+            합의안 요청
           </button>
         </div>
       )}
@@ -151,7 +151,7 @@ function ReadyResolution({
     <>
       <div className="rounded-md border border-green-100 bg-green-50/50 px-3 py-3">
         <div className="mb-1 flex items-center justify-between gap-2">
-          <div className="text-xs text-green-800">GPT-5.6 합의 요약</div>
+          <div className="text-xs text-green-800">합의 요약</div>
           <div className="text-xs text-green-700">신뢰도 {formatConfidence(proposal.confidence)}</div>
         </div>
         <p className="text-sm leading-relaxed text-green-950">{proposal.summary}</p>
@@ -306,7 +306,7 @@ function ResolutionLoadingState() {
     <div role="status" aria-live="polite" className="rounded-md border border-blue-100 bg-blue-50/40 p-3">
       <div className="mb-3 flex items-center gap-2">
         <div className="h-3 w-3 animate-spin rounded-full border-2 border-blue-200 border-t-blue-600" />
-        <div className="text-sm text-blue-950">GPT-5.6이 합의안을 만들고 있습니다</div>
+        <div className="text-sm text-blue-950">합의안을 만들고 있습니다</div>
       </div>
       <div className="space-y-2">
         <div className="h-2 w-full animate-pulse rounded-full bg-blue-100" />
@@ -333,7 +333,7 @@ function ResolutionErrorState({ message, onRetry }: { message: string; onRetry: 
         className="mt-3 w-full rounded-md border border-red-200 bg-white px-3 py-2 text-xs text-red-700 transition-colors hover:bg-red-50"
         onClick={onRetry}
       >
-        Ask GPT-5.6 again
+        합의안 다시 요청
       </button>
     </div>
   );

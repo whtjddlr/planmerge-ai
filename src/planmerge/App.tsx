@@ -45,6 +45,7 @@ import type {
   ProjectSettings,
 } from './lib/localWorkspace';
 import { AnalysisFailureError, generatePlanMergeAnalysis } from './lib/ai/planmergeAnalysisClient';
+import type { AnalysisTokenUsage } from './lib/ai/planmergeAnalysisClient';
 import { AnalysisKeySetup, type AnalysisKeyStatus } from './components/AnalysisKeySetup';
 import {
   fetchServerAnalysisStatus,
@@ -72,6 +73,7 @@ import { evaluateAnalysisQuality, type QualityLevel } from './lib/analysisQualit
 import { buildMarkdownExport } from './lib/exportMarkdown';
 import {
   documentSectionDefinitions,
+  MAX_ANALYSIS_DRAFT_COUNT,
   type ProtocolDecisionBlock,
   type ProtocolDecisionOption,
 } from './lib/ai/planmergeProtocol';
@@ -87,7 +89,6 @@ type AnalysisFailure = {
 };
 
 const SHARED_READ_ONLY_NOTICE = '공유 보기에서는 사용할 수 없습니다.';
-const MAX_DRAFT_COUNT = 30;
 
 export default function App() {
   const [activeView, setActiveView] = useState<AppView>('setup');
@@ -96,6 +97,8 @@ export default function App() {
   // 분석 실패는 2.4초 토스트로 사라지면 안 된다. 사용자가 재시도할지 수동으로
   // 진행할지 정할 때까지 화면에 남긴다.
   const [analysisError, setAnalysisError] = useState<AnalysisFailure | null>(null);
+  // 사용자 키로 돌아갈 수 있는 제품이므로 이번 분석이 얼마를 썼는지 보여준다.
+  const [analysisUsage, setAnalysisUsage] = useState<AnalysisTokenUsage | null>(null);
   // 서버에 키가 있으면 묻지 않고, 없으면 이 브라우저에 저장된 사용자 키를 쓴다.
   const [analysisKeyStatus, setAnalysisKeyStatus] = useState<AnalysisKeyStatus>({
     serverConfigured: false,
@@ -204,6 +207,12 @@ export default function App() {
     setActiveWorkspaceId(session.activeWorkspaceId);
     setWorkspaceState(session.state);
     setAnalysisStatus(session.state.analysisResult ? 'completed' : 'idle');
+
+    // 저장된 병합 결과를 프로토콜 불일치로 버렸다면 사라진 이유를 알려준다.
+    // 토스트는 2.4초 뒤 없어져 놓치기 쉬우므로 재시도 버튼이 있는 배너를 쓴다.
+    setAnalysisError(session.warnings?.length
+      ? { message: session.warnings[0], retryable: true, code: 'stored_result_dropped' }
+      : null);
   }, []);
 
   useEffect(() => {
@@ -495,8 +504,8 @@ export default function App() {
       return false;
     }
 
-    if (workspaceState.drafts.length >= MAX_DRAFT_COUNT) {
-      showNotice(`초안은 최대 ${MAX_DRAFT_COUNT}개까지 저장할 수 있습니다. 기존 초안을 삭제한 뒤 가져오세요.`);
+    if (workspaceState.drafts.length >= MAX_ANALYSIS_DRAFT_COUNT) {
+      showNotice(`초안은 최대 ${MAX_ANALYSIS_DRAFT_COUNT}개까지 저장할 수 있습니다. 기존 초안을 삭제한 뒤 가져오세요.`);
       return false;
     }
 
@@ -552,10 +561,10 @@ export default function App() {
     setAnalysisError(null);
     showNotice('병합 분석을 실행합니다.');
 
-    let analysisResult;
+    let analysisRun;
 
     try {
-      [analysisResult] = await Promise.all([
+      [analysisRun] = await Promise.all([
         generatePlanMergeAnalysis(payload),
         waitForLoadingTime(900),
       ]);
@@ -575,6 +584,7 @@ export default function App() {
       return;
     }
 
+    setAnalysisUsage(analysisRun.usage ?? null);
     setWorkspaceState((current) => ({
       ...current,
       analysisRunId: current.analysisRunId + 1,
@@ -582,7 +592,7 @@ export default function App() {
         ...draft,
         status: draft.rawText.trim() ? 'parsed' : draft.status,
       })),
-      analysisResult,
+      analysisResult: analysisRun.result,
       approvedBlockIds: [],
       decisionLogs: [],
     }));
@@ -850,7 +860,7 @@ export default function App() {
       result.source === 'local_fallback' ||
       result.proposal.status !== 'ready'
     ) {
-      showNotice('검증된 GPT-5.6 합의안만 적용할 수 있습니다.');
+      showNotice('검증된 합의안만 적용할 수 있습니다.');
       return;
     }
 
@@ -901,7 +911,7 @@ export default function App() {
         ],
       };
     });
-    showNotice('GPT-5.6 합의 패치를 적용했습니다. 변경 내용과 근거를 Decision Log에 기록했습니다.');
+    showNotice('합의 패치를 적용했습니다. 변경 내용과 근거를 Decision Log에 기록했습니다.');
   };
 
   const renderContent = () => {
@@ -1023,6 +1033,7 @@ export default function App() {
       />
       <div className="flex-1 min-w-0 flex flex-col">
         <Toolbar
+          analysisUsage={analysisUsage}
           activeView={effectiveActiveView}
           approvalStatus={approvalStatus}
           analysisStatus={analysisStatus}

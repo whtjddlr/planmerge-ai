@@ -1,4 +1,5 @@
 import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
+import { MAX_ANALYSIS_DRAFT_COUNT } from '../../lib/ai/planmergeProtocol';
 import { StatusBadge } from '../StatusBadge';
 import { getAnonymousClientId } from '../../lib/anonymousClient';
 import type { DraftFormInput, LocalDraftSubmission } from '../../lib/localWorkspace';
@@ -41,7 +42,6 @@ const initialForm: DraftFormInput = {
   rawText: '',
 };
 
-const MAX_DRAFT_COUNT = 30;
 const MAX_DRAFT_RAW_TEXT_LENGTH = 50000;
 const DRAFT_RAW_TEXT_COUNTER_THRESHOLD = 45000;
 const MAX_AUTHOR_NAME_LENGTH = 80;
@@ -69,7 +69,7 @@ export function DraftSubmitPage({
   const [sharedDraftMessage, setSharedDraftMessage] = useState<string | null>(null);
   const isSharedSubmitMode = mode === 'shared' && Boolean(sharedWorkspaceId);
   const canAnalyze = drafts.length > 0 && analysisStatus !== 'analyzing';
-  const draftLimitReached = drafts.length >= MAX_DRAFT_COUNT;
+  const draftLimitReached = drafts.length >= MAX_ANALYSIS_DRAFT_COUNT;
   const rawTextLength = form.rawText.length;
   const remoteDraftWorkspaceId = isSharedSubmitMode
     ? sharedWorkspaceId ?? null
@@ -326,7 +326,7 @@ export function DraftSubmitPage({
 
             {draftLimitReached && !isSharedSubmitMode && (
               <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                초안은 최대 {MAX_DRAFT_COUNT}개까지 저장할 수 있습니다. 기존 초안을 삭제한 뒤 추가해 주세요.
+                초안은 최대 {MAX_ANALYSIS_DRAFT_COUNT}개까지 저장할 수 있습니다. 기존 초안을 삭제한 뒤 추가해 주세요.
               </p>
             )}
 
@@ -453,7 +453,7 @@ function OwnerSharedDraftPanel({
 
       {draftLimitReached && (
         <p className="mb-3 rounded-md bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
-          로컬 초안이 {MAX_DRAFT_COUNT}개라 가져올 수 없습니다. 기존 초안을 삭제한 뒤 가져오세요.
+          로컬 초안이 {MAX_ANALYSIS_DRAFT_COUNT}개라 가져올 수 없습니다. 기존 초안을 삭제한 뒤 가져오세요.
         </p>
       )}
 

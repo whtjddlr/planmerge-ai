@@ -454,7 +454,7 @@ function DecisionLogsTab({ decisionLogs }: { decisionLogs: LocalDecisionLog[] })
               </div>
             </div>
             <StatusBadge variant={log.action === 'ai_consensus_applied' ? 'success' : 'warning'}>
-              {log.action === 'ai_consensus_applied' ? 'GPT-5.6 consensus' : '사용자 변경'}
+              {log.action === 'ai_consensus_applied' ? 'AI 합의' : '사용자 변경'}
             </StatusBadge>
           </div>
 

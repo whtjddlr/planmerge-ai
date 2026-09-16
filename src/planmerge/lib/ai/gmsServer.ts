@@ -51,12 +51,37 @@ export type ResponsesJsonCallOptions = GmsJsonCallOptions & {
   signal?: AbortSignal;
 };
 
+export type ModelUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  calls: number;
+};
+
 export type ResponsesJsonResult<T> = {
   data: T;
   responseId?: string;
   model?: string;
   reasoningTokens?: number;
+  usage?: ModelUsage;
 };
+
+export function emptyModelUsage(): ModelUsage {
+  return { inputTokens: 0, outputTokens: 0, reasoningTokens: 0, calls: 0 };
+}
+
+export function addModelUsage(total: ModelUsage, next?: ModelUsage): ModelUsage {
+  if (!next) {
+    return total;
+  }
+
+  return {
+    inputTokens: total.inputTokens + next.inputTokens,
+    outputTokens: total.outputTokens + next.outputTokens,
+    reasoningTokens: total.reasoningTokens + next.reasoningTokens,
+    calls: total.calls + next.calls,
+  };
+}
 
 const DEFAULT_GMS_API_URL = 'https://gms.ssafy.io/gmsapi/api.openai.com/v1/responses';
 const DEFAULT_GMS_MODEL = 'gpt-4.1';
@@ -254,6 +279,19 @@ function extractReasoningTokens(data: GmsResponsesApiResponse) {
   return typeof reasoningTokens === 'number' ? reasoningTokens : undefined;
 }
 
+/** 사용자 키로 돌아가는 제품이므로 이번 요청이 얼마를 썼는지 셀 수 있어야 한다. */
+function extractUsage(data: GmsResponsesApiResponse): ModelUsage {
+  const usage = isRecord(data.usage) ? data.usage : undefined;
+  const readCount = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
+
+  return {
+    inputTokens: readCount(usage?.input_tokens),
+    outputTokens: readCount(usage?.output_tokens),
+    reasoningTokens: extractReasoningTokens(data) ?? 0,
+    calls: 1,
+  };
+}
+
 function extractOutputText(data: GmsResponsesApiResponse) {
   if (typeof data.output_text === 'string' && data.output_text) {
     return data.output_text;
@@ -325,7 +363,11 @@ export function extractUnsupportedParam(status: number, errorText: string) {
 
 export async function callGmsJson<T>(
   prompt: string,
-  options: GmsJsonCallOptions & { config?: GmsConfig },
+  options: GmsJsonCallOptions & {
+    config?: GmsConfig;
+    /** 호출자가 여러 호출의 사용량을 합산할 수 있게 건네준다. */
+    onUsage?: (usage: ModelUsage) => void;
+  },
 ): Promise<T> {
   const { apiKey, apiUrl, model, provider } = options.config ?? getGmsConfig();
 
@@ -343,6 +385,10 @@ export async function callGmsJson<T>(
     // 아래 어댑티브 재시도가 파라미터를 빼고 그 사실을 모델별로 기억한다.
     temperature: 0.1,
   });
+
+  if (result.usage) {
+    options.onUsage?.(result.usage);
+  }
 
   return result.data;
 }
@@ -468,6 +514,7 @@ export async function callResponsesJsonWithMetadata<T>(
           ? { model: data.model.trim() }
           : {}),
         ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+        usage: extractUsage(data),
       };
     }
 

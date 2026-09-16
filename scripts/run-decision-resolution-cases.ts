@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { applyDecisionOptionOverride, applyDecisionResolutionProposal } from '../src/planmerge/lib/analysisOverride';
 import { evaluateAnalysisQuality } from '../src/planmerge/lib/analysisQuality';
+import { createDocumentSectionsFromAnalysis } from '../src/planmerge/lib/analysisViewModel';
 import {
   buildDecisionResolutionPrompt,
   createDecisionResolutionPayload,
@@ -495,6 +496,36 @@ const cases: Array<{ id: string; run: () => string }> = [
       );
 
       return 'a human may pick a forbidden option, but the violation stays visible and blocks readiness';
+    },
+  },
+  {
+    id: 'pre-v02-results-never-render-as-clean',
+    run: () => {
+      // 프로토콜 v0.2 이전 결과는 금지 방향을 판정할 수 없다. 판정 불가를
+      // "위반 없음"으로 읽히게 두면 이전 기획서가 통과한 것처럼 보인다.
+      const legacy = {
+        ...analysisResult,
+        normalizedIdeas: analysisResult.normalizedIdeas.map((idea) => {
+          const copy: Record<string, unknown> = { ...idea };
+          delete copy.forbiddenDirectionConflict;
+          return copy;
+        }),
+      } as unknown as typeof analysisResult;
+
+      // 죽지 않아야 한다. 이전에는 여기서 TypeError가 났다.
+      const report = evaluateAnalysisQuality(analysisPayload, legacy);
+
+      assert.equal(report.level, 'blocked', 'a result without judgements is never usable');
+      assert(
+        report.findings.some((finding) => finding.id === 'forbidden_direction_judgement_missing'),
+        'the gate must say the judgement is missing rather than stay silent',
+      );
+
+      // 섹션 뷰모델도 같은 입력에서 죽지 않아야 한다.
+      const sections = createDocumentSectionsFromAnalysis(legacy, sampleDrafts);
+      assert.equal(sections.length > 0, true);
+
+      return 'a pre-v0.2 result is reported as unusable instead of crashing or passing';
     },
   },
 ];

@@ -73,7 +73,11 @@ This version has breaking changes — APIs, conventions, and file structure may 
 9. **금지 방향 위반은 Quality Gate를 차단한다.** `analysisQuality.ts`는 선택안의 근거 아이디어가 `forbiddenDirectionConflict.conflicts`인 블록을 세어 `forbidden_direction_compliance` 메트릭과 `blocked` finding을 만들고, 등급을 스키마 오류와 같은 하드 블록으로 내린다. 평균에 희석되게 두면 12개 중 1건 위반이 100점 Ready로 나온다(실제로 그랬다).
    - 사람이 충돌 의견을 선택안으로 덮어쓰는 것은 정당한 권한이지만 위반을 해소하지는 않는다. `applyDecisionOptionOverride`는 충돌 옵션을 선택하면 `needsHumanReview`를 유지한다.
    - 차단 문구는 실제 사유를 말한다. "구조 오류 또는 근거 부족"으로 뭉뚱그리면 사용자가 엉뚱한 곳을 고치러 간다.
-10. **금지 방향 판정은 모델이 한다.** `NormalizedIdea.forbiddenDirectionConflict`(`conflicts`/`reason`/`evidence`)는 정규화 단계에서 모델이 한 번 내린 판정이고, 병합·서버 복구·Decision Room 안전 게이트가 모두 이 값을 읽는다. 누락되면 검증이 실패해야 하며 기본값으로 메우지 않는다 — 기본값 `false`는 금지 방향 제안을 조용히 통과시킨다. `judgeForbiddenDirectionByKeywords`는 하네스 픽스처 전용이므로 제품 경로에서 호출하지 않는다.
+10. **`Evidence Quality`와 `Decision Blocked`는 다른 축이다.** 전자는 근거·구조가 건전한가, 후자는 사람이 결정할 게 남았는가다. 미해결 결정이 있어도 `ready`가 정상이며 `baseline-default`/`complete-12-sections` 케이스가 이를 고정한다. 한 번 이 둘을 합치려다 두 케이스를 깨뜨렸다 — 모순처럼 보여도 합치지 않는다.
+11. **저장된 결과를 버릴 때는 이유를 말한다.** 프로토콜 버전이 오르면 이전 `analysisResult`는 검증에서 떨어진다. 세 로드 경로(localStorage·import·공유 스냅샷) 모두 `sanitizeAnalysisResult`를 거치므로 크래시는 없지만, 조용히 사라지면 사용자는 병합 결과가 왜 없어졌는지 알 수 없다. 로드 경고는 `LocalWorkspaceSession.warnings`로 올려 배너에 띄운다.
+12. **초안 상한은 `MAX_ANALYSIS_DRAFT_COUNT` 하나만 쓴다.** 서버 검증과 화면 안내가 갈라지면 저장은 되는데 분석에서 거절되는 상태가 생긴다.
+13. **토큰 사용량은 응답 헤더(`x-planmerge-usage`)로 보낸다.** 사용자 키로 돌아갈 수 있으므로 비용을 보여줘야 하지만, 전송 메타데이터를 분석 결과 스키마에 섞으면 프로토콜 버전을 올려야 한다.
+14. **금지 방향 판정은 모델이 한다.** `NormalizedIdea.forbiddenDirectionConflict`(`conflicts`/`reason`/`evidence`)는 정규화 단계에서 모델이 한 번 내린 판정이고, 병합·서버 복구·Decision Room 안전 게이트가 모두 이 값을 읽는다. 누락되면 검증이 실패해야 하며 기본값으로 메우지 않는다 — 기본값 `false`는 금지 방향 제안을 조용히 통과시킨다. `judgeForbiddenDirectionByKeywords`는 하네스 픽스처 전용이므로 제품 경로에서 호출하지 않는다.
 
 ## PR 전 체크리스트
 

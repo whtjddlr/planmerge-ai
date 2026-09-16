@@ -550,7 +550,7 @@ function getDecisionResolutionErrorMessage(error: unknown) {
     return error.message;
   }
 
-  return 'GPT-5.6 합의안을 만들지 못했습니다. 잠시 후 다시 시도해 주세요.';
+  return '합의안을 만들지 못했습니다. 잠시 후 다시 시도해 주세요.';
 }
 
 function ApplyOptionButton({

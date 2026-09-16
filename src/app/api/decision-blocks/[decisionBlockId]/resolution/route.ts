@@ -99,7 +99,9 @@ export async function POST(request: Request, context: RouteContext) {
         apiKey: provider.apiKey,
         apiUrl: provider.apiUrl,
         model: provider.model,
-        maxOutputTokens: 3_200,
+        // 옵션이 많고 의견이 긴 블록에서 3,200으로는 응답이 incomplete로 잘린다.
+        // merge에서 같은 방식으로 실패한 적이 있어 여유를 둔다.
+        maxOutputTokens: 8_000,
         providerLabel: provider.providerLabel,
         reasoningEffort: 'medium',
         jsonSchema: {
