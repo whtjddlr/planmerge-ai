@@ -517,6 +517,8 @@ type DecisionBlock = {
 
 ### 9.10 decision_options
 
+> **현재 상태(2026-09-17):** 이 절과 9장의 정규화 저장 모델(`normalized_ideas`, `decision_options`, `DecisionOptionSource` 등 16개)은 한 번도 쓰이지 않아 Prisma 스키마에서 제거됐다. 지금 DB에는 `User`/`Account`와 `SharedWorkspace*` 4개만 있고, 공유는 `snapshot Json` 하나로 돈다. 아래는 v0.1 설계 기록으로만 남긴다 — 정규화 저장으로 가려면 그때 다시 설계한다(AGENTS.md 아키텍처 지도).
+
 각 Decision Block 안에 들어가는 선택지.
 
 ```ts
