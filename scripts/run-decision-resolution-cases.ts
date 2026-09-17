@@ -44,6 +44,11 @@ import {
   sanitizeStoredAnalysisUsage,
 } from '../src/planmerge/lib/analysisEstimate';
 import { parseAnalysisStreamLine } from '../src/planmerge/lib/ai/planmergeAnalysisClient';
+import {
+  analysisFailureHint,
+  analysisFailureReasons,
+  classifyAnalysisFailure,
+} from '../src/planmerge/lib/ai/analysisFailureReason';
 
 /** 문서 작성 검증을 돌린다. 모든 결정을 덮는 최소한의 올바른 출력을 기본으로 만든다. */
 function composeSections(
@@ -1539,6 +1544,37 @@ const cases: Array<{ id: string; run: () => string }> = [
       assert.strictEqual(ensureServerOwnedEnvelope(stamped, 'openai'), stamped);
 
       return 'protocolVersion and source come from the server, so a model that omits or invents them cannot fail validation';
+    },
+  },
+  {
+    id: 'analysis-failures-get-a-reason-the-user-can-act-on',
+    run: () => {
+      // 사유는 이 리포가 만든 오류 메시지에서만 나온다. 업스트림 텍스트는 그대로 나가지 않는다.
+      assert.equal(classifyAnalysisFailure(new Error('Repair validation failed: merge 응답이 …')), 'repair_invalid');
+      assert.equal(classifyAnalysisFailure(new Error('Normalize validation failed for draft-x: …')), 'normalize_invalid');
+      assert.equal(classifyAnalysisFailure(new Error('OpenAI Responses API response incomplete: max_output_tokens')), 'response_incomplete');
+      assert.equal(classifyAnalysisFailure(new Error('OpenAI Responses API failed with 401: {...}')), 'upstream_rejected');
+
+      const transient = new Error('429');
+      transient.name = 'TransientUpstreamError';
+      assert.equal(classifyAnalysisFailure(transient), 'upstream_transient');
+
+      // 실측 run5: 호출 한 건이 120초를 넘겨 fetch가 TimeoutError를 던졌다.
+      const timeout = new Error('The operation was aborted due to timeout');
+      timeout.name = 'TimeoutError';
+      assert.equal(classifyAnalysisFailure(timeout), 'upstream_timeout');
+
+      assert.equal(classifyAnalysisFailure(new Error('something else')), 'unknown');
+      assert.equal(classifyAnalysisFailure('not an error'), 'unknown');
+
+      // unknown에는 안내가 없다 — 모르는 것을 아는 척하지 않는다. 나머지는 전부 안내가 있다.
+      assert.equal(analysisFailureHint('unknown'), undefined);
+      assert.equal(analysisFailureHint('teleport_failed'), undefined);
+      analysisFailureReasons
+        .filter((reason) => reason !== 'unknown')
+        .forEach((reason) => assert(analysisFailureHint(reason), `${reason} must have a hint`));
+
+      return 'a 502 names why it failed with a server-controlled code, and the screen turns that into a next step';
     },
   },
 ];

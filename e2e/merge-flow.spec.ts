@@ -15,6 +15,7 @@ import {
   sectionNumberOf,
   seedWorkspaceWithoutAnalysis,
   stubAnalysis,
+  stubAnalysisFailure,
   stubAnalysisStream,
   stubConfiguredProvider,
 } from './support/workspace';
@@ -33,6 +34,18 @@ test.describe('병합 결과 흐름', () => {
     await seedWorkspaceWithoutAnalysis(page);
     await stubConfiguredProvider(page);
     await stubAnalysis(page);
+  });
+
+  test('모델 편차로 실패하면 사유와 다음 행동을 말한다', async ({ page }) => {
+    await stubAnalysisFailure(page, 'repair_invalid');
+    await page.goto('/');
+    await page.getByRole('button', { name: /^병합 결과$/ }).click();
+    await runAnalysis(page);
+
+    const banner = page.getByTestId('analysis-error-banner');
+    await expect(banner).toBeVisible();
+    await expect(page.getByTestId('analysis-error-hint')).toContainText('다시 시도하면 보통 성공합니다');
+    await expect(banner.getByRole('button', { name: '다시 시도' })).toBeVisible();
   });
 
   test('스트림으로 답하는 서버면 결과와 사용량을 마지막 이벤트에서 읽는다', async ({ page }) => {

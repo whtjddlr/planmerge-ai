@@ -133,6 +133,21 @@ export async function stubAnalysisStream(page: Page) {
   });
 }
 
+/** 분석 API가 모델 편차로 502를 낸 상태. 사유 코드가 화면 안내로 이어지는지 본다. */
+export async function stubAnalysisFailure(page: Page, reason: string) {
+  await page.route('**/api/analyze/planmerge', async (route) => {
+    await route.fulfill({
+      status: 502,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        code: 'analysis_failed',
+        reason,
+        errors: ['gpt-5.6-luna 분석에 실패했습니다. 잠시 후 다시 시도해 주세요.'],
+      }),
+    });
+  });
+}
+
 /** 분석 API가 키 미설정으로 실패하는 상태를 만든다. */
 export async function stubAnalysisUnconfigured(page: Page) {
   await page.route('**/api/analyze/planmerge', async (route) => {

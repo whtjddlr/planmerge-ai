@@ -1,4 +1,5 @@
 import { analysisAuthHeaders, loadAnalysisCredentials } from '../analysisKeyStore';
+import { isAnalysisFailureReason, type AnalysisFailureReason } from './analysisFailureReason';
 import { validatePlanMergeAnalysis } from './planmergeProtocol';
 import type {
   PlanMergeAnalysisPayload,
@@ -22,13 +23,22 @@ export class AnalysisFailureError extends Error {
   readonly code: AnalysisFailureCode;
   readonly retryable: boolean;
   readonly detail?: string;
+  /** 서버가 분류한 502 사유. 업스트림 텍스트가 아니라 우리가 통제하는 enum이다. */
+  readonly reason?: AnalysisFailureReason;
 
-  constructor(code: AnalysisFailureCode, message: string, retryable: boolean, detail?: string) {
+  constructor(
+    code: AnalysisFailureCode,
+    message: string,
+    retryable: boolean,
+    detail?: string,
+    reason?: AnalysisFailureReason,
+  ) {
     super(message);
     this.name = 'AnalysisFailureError';
     this.code = code;
     this.retryable = retryable;
     this.detail = detail;
+    this.reason = reason;
   }
 }
 
@@ -343,11 +353,16 @@ function analysisFailureFrom(status: number, errorPayload: unknown) {
     );
   }
 
+  const reason = isRecord(errorPayload) && isAnalysisFailureReason(errorPayload.reason)
+    ? errorPayload.reason
+    : undefined;
+
   return new AnalysisFailureError(
     'analysis_failed',
     detail ?? `분석에 실패했습니다. 서버 응답 상태: ${response.status}`,
     true,
     detail,
+    reason,
   );
 }
 

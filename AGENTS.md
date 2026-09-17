@@ -24,11 +24,11 @@ This version has breaking changes — APIs, conventions, and file structure may 
 |---|---|---|
 | `npm ci` | 의존성 설치 | `postinstall`에서 `prisma generate` 자동 실행 |
 | `npm run lint` | ESLint | |
-| `npm run harness:quality` | **품질 회귀 게이트** (품질 12 + 결정 46 케이스) | 오프라인. 모델 호출 없음. 실패 시 exit 1 |
+| `npm run harness:quality` | **품질 회귀 게이트** (품질 12 + 결정 47 케이스) | 오프라인. 모델 호출 없음. 실패 시 exit 1 |
 | `npm run harness:local` | 로컬 하네스 단건 실행 + 프롬프트 미리보기 | 오프라인 |
 | `npm run build` | `next build` | `OPENAI_API_KEY`/`GMS_API_KEY`/`DATABASE_URL` 없어도 성공해야 함 |
 | `npm run dev` | 개발 서버 | |
-| `npm run test:e2e` | **Playwright UI 흐름** (10개, 로그인 포함) | `playwright.config.ts`가 자체 dev 서버를 띄운다. `webServer.env`가 DB·분석 키를 비워 유료 호출과 운영 DB 접근을 막는다. 결과가 필요한 스펙은 `e2e/support/workspace.ts`가 분석 API를 실제 모델 출력 픽스처로 가로챈다 |
+| `npm run test:e2e` | **Playwright UI 흐름** (11개, 로그인 포함) | `playwright.config.ts`가 자체 dev 서버를 띄운다. `webServer.env`가 DB·분석 키를 비워 유료 호출과 운영 DB 접근을 막는다. 결과가 필요한 스펙은 `e2e/support/workspace.ts`가 분석 API를 실제 모델 출력 픽스처로 가로챈다 |
 | `npm run test:live` | **실제 모델 E2E 시나리오** (5개) | 유료 호출. `npm run dev`가 떠 있어야 함. `OPENAI_API_KEY`를 BYOK 헤더로 보냄. CI 기본 경로에 넣지 않는다 |
 | `npm run setup` | API 키 입력 → 키 검증 → 모델 자동 선택 → `.env.local` 생성/갱신 | 대화형 입력은 화면에 표시되지 않음. `echo $KEY \| npm run setup`도 가능 |
 
@@ -88,7 +88,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
    - **사람이 선택안을 바꿔도 서버는 본문을 고쳐 쓰지 않는다.** 한때 `applyDecisionOptionOverride`가 섹션 본문 전체를 방금 고른 옵션 문장 하나로 교체했다 — 섹션에 결정이 3개면 나머지 2개 내용이 문서에서 사라졌고, 모델이 쓴 산문도 첫 클릭에 날아갔다. 이제 본문은 두고, `sectionIsStale`이 `composedFrom`과 현재 `selectedOptionId`를 비교해 "본문 갱신 필요"를 파생한다. 사용자가 "본문 다시 쓰기"를 누르면 `/api/document-sections/compose`가 그 섹션의 결정만 모델에 넘겨 다시 쓴다(호출 1건, 사용자가 시점을 정한다). Decision Room의 `revisedSectionContent`는 그 섹션의 결정이 그 블록 하나일 때만 본문이 된다 — 여럿이면 다른 결정을 지우게 되므로 낡음으로 표시되게 둔다.
    - **문서 작성의 위조 검사는 숫자를 본다.** 본문의 숫자가 근거 블록·아이디어·프로젝트 기준 어디에도 없으면 거부한다. 기획 문서에서 날조가 가장 위험한 값이 지표·기간·금액이다. 단, **두 자리 이상만** 본다 — 한 자리는 목록 번호("1. 첫째")로도 쓰여서 오탐이 `502`가 된다. 그래서 한 자리 숫자 날조는 이 검사로 잡히지 않는다. 문체와 길이는 검사하지 않는다(그건 Quality Gate의 축이다).
    - `ensureAssumptionBackedBlocksAreReviewed`는 선택안이 `intent`가 `assume`/`question`인 아이디어에만 근거할 때 `needsHumanReview`를 켠다. `confidence`는 "초안에 그렇게 쓰여 있는가"를 잴 뿐 "확인됐는가"를 재지 않아서, 한 줄짜리 추측을 충실히 옮기면 confidence 0.95에 검토 불필요로 나올 수 있다. 실제 모델 테스트에서 발견한 경우다. 순수 함수라 `planmergeProtocol.ts`에 두고 회귀 케이스가 직접 호출한다.
-4. **정직한 실패.** (2026-09-16 변경, 이전의 "폴백 설계"를 대체) 제품 경로는 모델 결과를 만들지 못하면 규칙 기반 결과를 성공처럼 반환하지 않는다. `/api/analyze/planmerge`, `/api/decision-blocks/:id/resolution`, `/api/decision-blocks/:id/opinion-clusters`는 모두 키 미설정 시 `503`, 모델 호출·검증 실패 시 `502`를 `{ code, errors }` 형태로 반환한다. 업스트림 오류 본문은 서버 로그에만 남기고 클라이언트에 노출하지 않는다. `runLocalPlanMergeHarness`는 `scripts/`에서만 호출한다. `src/` 안에서 이 함수를 부르는 코드가 생기면 규칙 위반이다.
+4. **정직한 실패.** (2026-09-16 변경, 이전의 "폴백 설계"를 대체) 제품 경로는 모델 결과를 만들지 못하면 규칙 기반 결과를 성공처럼 반환하지 않는다. `/api/analyze/planmerge`, `/api/decision-blocks/:id/resolution`, `/api/decision-blocks/:id/opinion-clusters`는 모두 키 미설정 시 `503`, 모델 호출·검증 실패 시 `502`를 `{ code, errors }` 형태로 반환한다. 업스트림 오류 본문은 서버 로그에만 남기고 클라이언트에 노출하지 않는다. 대신 분석 502에는 서버가 분류한 `reason`(`analysisFailureReason.ts`의 enum: 정규화·복구 검증 실패, 업스트림 일시 오류·거절, 응답 잘림)을 싣고, 화면이 사유별 다음 행동을 안내한다. 실측에서 502의 대부분은 재시도로 풀리는 모델 편차였는데 사용자는 그걸 알 수 없었다. `runLocalPlanMergeHarness`는 `scripts/`에서만 호출한다. `src/` 안에서 이 함수를 부르는 코드가 생기면 규칙 위반이다.
    - Decision Room 결과의 `source`는 `gms | openai`만이다. `local_fallback`과 그것을 만들던 `createNonApplicableDecisionResolution`(호출자 0)은 제거했고, 파서가 그 값을 거부한다(`non-applicable-result-never-applies` 케이스). 모델이 `needs_input`으로 답하면 적용할 것이 없다고 정직하게 말하는 것이고, 그건 폴백이 아니다.
 5. **수기 검증기는 의도된 설계다.** Zod 등 스키마 라이브러리 도입은 별도 합의 없이 하지 않는다. 검증 규칙을 바꾸면 반드시 `run-planmerge-quality-cases.ts`에 케이스를 추가/갱신한다.
 6. **`protocolVersion: '0.4'`.** 프로토콜 형태를 바꾸는 변경은 버전 상향 + 문서 갱신과 함께만 한다.

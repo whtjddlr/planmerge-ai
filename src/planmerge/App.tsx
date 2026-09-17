@@ -46,6 +46,7 @@ import type {
 } from './lib/localWorkspace';
 import { AnalysisFailureError, generatePlanMergeAnalysis } from './lib/ai/planmergeAnalysisClient';
 import type { AnalysisProgressEvent, AnalysisStage } from './lib/ai/planmergeAnalysisClient';
+import { analysisFailureHint } from './lib/ai/analysisFailureReason';
 import { describeAnalysisCost } from './lib/analysisEstimate';
 import { recomposeDocumentSection } from './lib/ai/documentCompositionClient';
 import { replaceDocumentSection } from './lib/ai/documentComposition';
@@ -89,6 +90,8 @@ type AnalysisFailure = {
   detail?: string;
   retryable: boolean;
   code?: string;
+  /** 서버가 분류한 사유. 있으면 사용자가 다음에 할 일을 안내한다. */
+  reason?: string;
 };
 
 const SHARED_READ_ONLY_NOTICE = '공유 보기에서는 사용할 수 없습니다.';
@@ -590,7 +593,13 @@ export default function App() {
       ]);
     } catch (error) {
       const failure: AnalysisFailure = error instanceof AnalysisFailureError
-        ? { message: error.message, detail: error.detail, retryable: error.retryable, code: error.code }
+        ? {
+          message: error.message,
+          detail: error.detail,
+          retryable: error.retryable,
+          code: error.code,
+          reason: error.reason,
+        }
         : {
           message: '분석 중 알 수 없는 오류가 발생했습니다.',
           detail: error instanceof Error ? error.message : undefined,
@@ -1158,6 +1167,11 @@ export default function App() {
             <div className="min-w-0">
               <div className="font-medium">분석에 실패했습니다.</div>
               <div className="mt-0.5">{analysisError.message}</div>
+              {analysisFailureHint(analysisError.reason) && (
+                <div data-testid="analysis-error-hint" className="mt-1 text-xs text-red-900">
+                  {analysisFailureHint(analysisError.reason)}
+                </div>
+              )}
               {analysisError.detail && (
                 <div className="mt-1 break-words text-xs text-red-700/80">{analysisError.detail}</div>
               )}

@@ -41,6 +41,7 @@ import {
   buildIdeaPlacementPrompt,
   validateIdeaPlacementResult,
 } from '@/planmerge/lib/ai/ideaPlacement';
+import { classifyAnalysisFailure } from '@/planmerge/lib/ai/analysisFailureReason';
 import { checkRateLimit, getClientKey } from '@/server/rateLimit';
 
 // 초안 30개 × normalize 1회 + merge까지 한 요청 안에서 끝나야 한다. 플랫폼 기본
@@ -655,7 +656,10 @@ export async function POST(request: Request) {
       // 업스트림 오류 본문에는 게이트웨이 내부 정보가 섞일 수 있어 서버 로그에만 남긴다.
       console.error('[analyze/planmerge] analysis failed:', error);
 
-      return failureResponse(502, 'analysis_failed', failureMessage);
+      return NextResponse.json(
+        { code: 'analysis_failed', reason: classifyAnalysisFailure(error), errors: [failureMessage] },
+        { status: 502 },
+      );
     }
   }
 
@@ -678,7 +682,13 @@ export async function POST(request: Request) {
         send({ type: 'result', result, usage });
       } catch (error) {
         console.error('[analyze/planmerge] analysis failed:', error);
-        send({ type: 'error', status: 502, code: 'analysis_failed', errors: [failureMessage] });
+        send({
+          type: 'error',
+          status: 502,
+          code: 'analysis_failed',
+          reason: classifyAnalysisFailure(error),
+          errors: [failureMessage],
+        });
       } finally {
         controller.close();
       }
