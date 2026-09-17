@@ -1,0 +1,6 @@
+# 줄끝을 LF로 통일한다. CRLF 59 : LF 8로 섞여 있어 커밋마다 경고가 나고 diff에 노이즈가 섰다.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.webp binary
+*.ico binary
