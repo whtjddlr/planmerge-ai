@@ -17,8 +17,11 @@ import {
   ensureAssumptionBackedBlocksAreReviewed,
   ensureDecisionBlockShape,
   ensureOptionsCiteKnownIdeas,
+  applyRepairedDecisionBlocks,
   ensureServerOwnedEnvelope,
   ensureServerOwnedSelectionSource,
+  partitionBlockerScope,
+  validateRepairedDecisionBlocks,
   exceedsPlacementRecoveryLimit,
   sectionIsStale,
   PLACEMENT_RECOVERABLE_IDEA_LIMIT,
@@ -1638,6 +1641,150 @@ const cases: Array<{ id: string; run: () => string }> = [
       assert(report.score <= 60, `score must be capped, got ${report.score}`);
 
       return 'a merge that folds every section into one block is caught by citing ideas outside their section';
+    },
+  },
+  {
+    id: 'block-errors-are-scoped-to-their-block',
+    run: () => {
+      const scope = partitionBlockerScope([
+        'decisionBlocks[2].options[0] is missing sourceIdeaIds',
+        'decisionBlocks[2] selectedOptionId does not match options',
+        'decisionBlocks[5] must include exactly one selected option',
+        'finalDocumentSections[1] is missing content',
+      ]);
+
+      assert.deepEqual(scope.blockIndexes, [2, 5], 'block errors collapse to the blocks they name');
+      assert.deepEqual(scope.others, ['finalDocumentSections[1] is missing content']);
+
+      // 블록 오류가 없으면 좁은 복구를 쓸 수 없다 — 호출자가 전체 복구로 내려간다.
+      assert.deepEqual(partitionBlockerScope(['protocolVersion must be 0.4']).blockIndexes, []);
+
+      return 'validation errors are partitioned so a repair can be scoped to the blocks that failed';
+    },
+  },
+  {
+    id: 'block-repair-cannot-merge-or-drop-blocks',
+    run: () => {
+      // 이것이 과잉 병합을 막는 장치다: 요청한 인덱스마다 블록이 정확히 하나씩 와야 한다.
+      const merged = validateRepairedDecisionBlocks(
+        { decisionBlocks: [{ repairIndex: 1, id: 'decision_merged', options: [] }] },
+        [1, 3],
+      );
+
+      assert.equal(merged.valid, false, 'two broken blocks may not come back as one');
+      assert(
+        !merged.valid && merged.errors.some((error) => error.includes('were not returned')),
+        'the missing index must be named',
+      );
+
+      const duplicated = validateRepairedDecisionBlocks(
+        {
+          decisionBlocks: [
+            { repairIndex: 1, id: 'a', options: [] },
+            { repairIndex: 1, id: 'b', options: [] },
+          ],
+        },
+        [1],
+      );
+
+      assert.equal(duplicated.valid, false, 'one index may not come back twice');
+
+      const stray = validateRepairedDecisionBlocks(
+        { decisionBlocks: [{ repairIndex: 9, id: 'a', options: [] }] },
+        [1],
+      );
+
+      assert.equal(stray.valid, false, 'an index that was not requested is refused');
+      assert.equal(validateRepairedDecisionBlocks({}, [1]).valid, false);
+
+      return 'the repair call must return one block per requested index, so it cannot collapse the document';
+    },
+  },
+  {
+    id: 'block-repair-leaves-the-other-blocks-alone',
+    run: () => {
+      const broken = analysisResult.decisionBlocks.findIndex((block) => block.options.length >= 2);
+
+      assert(broken >= 0, 'fixture must contain a block with alternatives');
+
+      const target = analysisResult.decisionBlocks[broken];
+      const fixed = {
+        ...target,
+        selectionReason: '검증 오류를 고친 뒤의 선택 근거입니다. 프로젝트 기준을 명시합니다.',
+      };
+      const validation = validateRepairedDecisionBlocks(
+        { decisionBlocks: [{ repairIndex: broken, ...fixed }] },
+        [broken],
+      );
+
+      assert(validation.valid, 'a well-scoped response is accepted');
+
+      const applied = applyRepairedDecisionBlocks(analysisResult, validation.blocksByIndex);
+
+      assert.equal(applied.decisionBlocks.length, analysisResult.decisionBlocks.length, 'no block count change');
+      assert.equal(applied.decisionBlocks[broken].selectionReason, fixed.selectionReason, 'the repaired block is swapped in');
+      analysisResult.decisionBlocks.forEach((block, index) => {
+        if (index !== broken) {
+          assert.strictEqual(applied.decisionBlocks[index], block, `block ${index} must be untouched`);
+        }
+      });
+      assert(
+        applied.warnings.some((warning) => warning.includes('나머지 결정은 그대로입니다')),
+        'the narrow scope must be on the record',
+      );
+      assert.equal(validatePlanMergeAnalysis(analysisPayload, applied).valid, true);
+
+      // repairIndex는 프로토콜 필드가 아니므로 결과에 남지 않는다.
+      assert.equal(
+        (applied.decisionBlocks[broken] as unknown as { repairIndex?: number }).repairIndex,
+        undefined,
+      );
+
+      return 'a scoped repair swaps only the failed blocks and keeps the rest identical';
+    },
+  },
+  {
+    id: 'one-malformed-block-does-not-void-the-whole-result',
+    run: () => {
+      // 실측에서 이 경로가 과잉 병합의 원인이었다. 블록 하나에 options가 없으면 예전
+      // coerce는 전체를 포기했고, 검증기가 모델 원본을 보며 오류 50개를 냈다. 그러면
+      // 오류가 블록 범위로 좁혀지지 않아 전체 복구로 내려가고, 전체 복구가 문서를
+      // 재구성했다. partitionBlockerScope가 그 차이를 그대로 보여준다.
+      const bare = {
+        decisionBlocks: analysisResult.decisionBlocks.map((block, index) => (
+          index === 1 ? { ...block, options: undefined } : block
+        )),
+        warnings: [],
+      };
+      const abandoned = partitionBlockerScope(
+        validatePlanMergeAnalysis(analysisPayload, bare).errors,
+      );
+
+      assert(
+        abandoned.others.length > 0,
+        'an un-coerced result carries top-level errors, which is what pushed repairs to the wide path',
+      );
+      assert(
+        abandoned.others.some((error) => error.includes('protocolVersion') || error.includes('normalizedIdeas')),
+        'those errors are about the envelope, not about any block',
+      );
+
+      // 보정된 뒤에는 오류가 그 블록 하나로 좁혀진다 → 블록 단위 복구가 걸린다.
+      const coerced = {
+        ...analysisResult,
+        decisionBlocks: analysisResult.decisionBlocks.filter((_block, index) => index !== 1),
+      };
+      const scoped = partitionBlockerScope(
+        validatePlanMergeAnalysis(analysisPayload, coerced).errors,
+      );
+
+      assert.deepEqual(
+        scoped.others.filter((error) => error.startsWith('protocolVersion') || error.startsWith('normalizedIdeas')),
+        [],
+        'dropping the malformed block leaves the envelope intact',
+      );
+
+      return 'dropping one malformed block keeps the rest of the result usable, so repairs stay narrow';
     },
   },
 ];

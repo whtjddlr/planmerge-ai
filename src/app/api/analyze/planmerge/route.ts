@@ -11,8 +11,12 @@ import {
   ensureDecisionBlockShape,
   exceedsPlacementRecoveryLimit,
   ensureOptionsCiteKnownIdeas,
+  applyRepairedDecisionBlocks,
+  buildDecisionBlockRepairPrompt,
   ensureServerOwnedEnvelope,
   ensureServerOwnedSelectionSource,
+  partitionBlockerScope,
+  validateRepairedDecisionBlocks,
   validateDraftNormalizeResult,
   validatePlanMergeAnalysis,
 } from '@/planmerge/lib/ai/planmergeProtocol';
@@ -82,6 +86,9 @@ const PLACEMENT_MAX_OUTPUT_TOKENS = 8_000;
 
 // 문서 작성은 섹션 12개 산문이 나오므로 출력이 크다. 입력은 결정 요약뿐이다.
 const COMPOSITION_MAX_OUTPUT_TOKENS = 16_000;
+
+// 블록 단위 복구는 깨진 블록 몇 개만 다룬다. merge 전체를 다시 쓰는 것보다 훨씬 작다.
+const BLOCK_REPAIR_MAX_OUTPUT_TOKENS = 12_000;
 
 
 const normalizedIdeaTypes = new Set<NormalizedIdeaType>([
@@ -388,16 +395,23 @@ function coerceMergeResultShape(result: unknown): PlanMergeAnalysisResult | unde
 
   const record = result as Record<string, unknown>;
 
-  const repairableBlocks = Array.isArray(record.decisionBlocks)
-    && record.decisionBlocks.every((block) => (
-      typeof block === 'object'
-      && block !== null
-      && Array.isArray((block as Record<string, unknown>).options)
-    ));
-
-  if (!repairableBlocks) {
+  if (!Array.isArray(record.decisionBlocks)) {
     return undefined;
   }
+
+  // 옵션 배열이 없는 블록은 서버가 되돌릴 근거가 없다. 하지만 그 블록 하나 때문에 전체를
+  // 포기하면 canonical 아이디어도 붙지 않고 봉투도 안 찍혀서, 검증기가 모델 원본을 보고
+  // 오류 50개를 쏟아낸다. 그러면 오류가 블록 범위로 좁혀지지 않아 전체 복구로 내려가고,
+  // 전체 복구는 문서를 재구성한다. 실측에서 이게 과잉 병합(Coherence 33%)의 원인이었다.
+  //
+  // 대신 그 블록만 버린다. 버려진 블록이 인용하던 아이디어는 "배치되지 않음"이 되어
+  // 배치 판정 호출이 어디에 둘지 모델에 되묻는다 — 이미 있는 이음새다.
+  const blocks = record.decisionBlocks.filter((block) => (
+    typeof block === 'object'
+    && block !== null
+    && Array.isArray((block as Record<string, unknown>).options)
+  ));
+  const droppedBlocks = record.decisionBlocks.length - blocks.length;
 
   const sections = Array.isArray(record.finalDocumentSections)
     ? record.finalDocumentSections.filter((section) => typeof section === 'object' && section !== null)
@@ -408,15 +422,24 @@ function coerceMergeResultShape(result: unknown): PlanMergeAnalysisResult | unde
   const warnings = (Array.isArray(record.warnings) ? record.warnings : [])
     .filter((warning): warning is string => typeof warning === 'string');
 
+  const notes = [...warnings];
+
+  if (droppedSections) {
+    notes.push(`형태가 맞지 않는 최종 문서 섹션 ${droppedSections}개를 버리고 결정 블록에서 다시 세웠습니다.`);
+  }
+
+  if (droppedBlocks) {
+    notes.push(`옵션 목록이 없는 결정 ${droppedBlocks}개를 버렸습니다. 그 아이디어들은 배치 판정으로 다시 배치합니다.`);
+  }
+
   return {
     ...(record as unknown as PlanMergeAnalysisResult),
+    decisionBlocks: blocks as PlanMergeAnalysisResult['decisionBlocks'],
     finalDocumentSections: sections as PlanMergeAnalysisResult['finalDocumentSections'],
     missingSections: (Array.isArray(record.missingSections)
       ? record.missingSections
       : []) as PlanMergeAnalysisResult['missingSections'],
-    warnings: droppedSections
-      ? [...warnings, `형태가 맞지 않는 최종 문서 섹션 ${droppedSections}개를 버리고 결정 블록에서 다시 세웠습니다.`]
-      : warnings,
+    warnings: notes,
   };
 }
 
@@ -555,10 +578,24 @@ async function buildMergeResult(
     return { result: finalizeMergeResult(current), blockers: [] };
   }
 
+  return composeDocument(payload, current, options);
+}
+
+/**
+ * 확정된 결정으로 문서를 쓴다.
+ *
+ * 블록이 바뀌면 본문도 다시 써야 하므로(본문은 이전 선택안을 보고 쓰였다) 블록 단위
+ * 복구 뒤에도 이 함수를 다시 부른다.
+ */
+async function composeDocument(
+  payload: PlanMergeAnalysisPayload,
+  result: PlanMergeAnalysisResult,
+  options: { config: GmsConfig; onUsage: (usage: ModelUsage) => void; onStage: StageListener },
+): Promise<BuiltMergeResult> {
   options.onStage({ stage: 'compose', status: 'started' });
 
   const compositionRaw = await callGmsJson<unknown>(
-    buildDocumentCompositionPrompt(payload, current.decisionBlocks),
+    buildDocumentCompositionPrompt(payload, result.decisionBlocks),
     {
       maxOutputTokens: COMPOSITION_MAX_OUTPUT_TOKENS,
       config: options.config,
@@ -567,14 +604,14 @@ async function buildMergeResult(
   );
   const composition = validateDocumentCompositionResult(
     compositionRaw,
-    current.decisionBlocks,
-    current.normalizedIdeas,
+    result.decisionBlocks,
+    result.normalizedIdeas,
     payload,
   );
 
   if (!composition.valid) {
     return {
-      result: finalizeMergeResult(current),
+      result: finalizeMergeResult(result),
       blockers: [
         `문서 작성이 검증을 통과하지 못했습니다: ${composition.errors.slice(0, 3).join(', ')}`,
       ],
@@ -584,9 +621,65 @@ async function buildMergeResult(
   options.onStage({ stage: 'compose', status: 'done' });
 
   return {
-    result: finalizeMergeResult(applyDocumentComposition(current, composition.sections)),
+    result: finalizeMergeResult(applyDocumentComposition(result, composition.sections)),
     blockers: [],
   };
+}
+
+/**
+ * 깨진 결정 블록만 다시 받아 제자리에 끼운다.
+ *
+ * 성공하면 문서를 다시 쓴 결과, 고칠 수 없으면 undefined를 준다. undefined면 호출자가
+ * 전체 복구로 내려간다.
+ */
+async function repairDecisionBlocks(
+  payload: PlanMergeAnalysisPayload,
+  result: PlanMergeAnalysisResult,
+  blockIndexes: number[],
+  errors: string[],
+  normalizedIdeas: NormalizedIdea[],
+  options: { config: GmsConfig; onUsage: (usage: ModelUsage) => void; onStage: StageListener },
+): Promise<BuiltMergeResult | undefined> {
+  const requests = blockIndexes
+    .filter((index) => result.decisionBlocks[index] !== undefined)
+    .map((index) => ({
+      repairIndex: index,
+      block: result.decisionBlocks[index],
+      errors: errors.filter((error) => error.startsWith(`decisionBlocks[${index}]`)),
+    }));
+
+  if (!requests.length) {
+    return undefined;
+  }
+
+  options.onStage({ stage: 'repair', status: 'started' });
+
+  const raw = await callGmsJson<unknown>(
+    buildDecisionBlockRepairPrompt(payload, requests, normalizedIdeas),
+    {
+      maxOutputTokens: BLOCK_REPAIR_MAX_OUTPUT_TOKENS,
+      config: options.config,
+      onUsage: options.onUsage,
+    },
+  );
+  const repaired = validateRepairedDecisionBlocks(raw, requests.map((request) => request.repairIndex));
+
+  if (!repaired.valid) {
+    console.error('[analyze/planmerge] block repair scope validation failed:', repaired.errors);
+
+    return undefined;
+  }
+
+  // 서버가 소유하는 필드는 모델이 무엇을 보냈든 다시 찍는다.
+  const spliced = ensureServerOwnedSelectionSource(
+    ensureServerOwnedEnvelope(
+      applyRepairedDecisionBlocks(result, repaired.blocksByIndex),
+      options.config.provider,
+    ),
+  );
+
+  // 블록이 바뀌었으므로 본문을 다시 쓴다 — 이전 선택안을 보고 쓴 문서를 그대로 두지 않는다.
+  return composeDocument(payload, spliced, options);
 }
 
 export async function POST(request: Request) {
@@ -731,6 +824,46 @@ async function runAnalysisPipeline(
 
   if (!mergeErrors.length) {
     return { ...merge.result, source: config.provider } satisfies PlanMergeAnalysisResult;
+  }
+
+  // 어떤 오류로 복구에 들어갔는지는 운영에서 알아야 한다. 전부 이 리포가 만든 문구이고,
+  // 이 로그가 없었을 때 "블록 단위 복구가 왜 안 걸리는지"를 추측으로 메울 수밖에 없었다.
+  console.warn('[analyze/planmerge] merge blockers:', JSON.stringify(mergeErrors));
+
+  // 오류가 전부 블록 하나로 좁혀지면 그 블록만 다시 받는다. 결과 전체를 다시 쓰게 하면
+  // 모델이 구조를 새로 짜고, 실측에서 그 경로가 여러 섹션을 한 블록으로 접었다.
+  const scope = partitionBlockerScope(mergeErrors);
+
+  if (scope.blockIndexes.length && !scope.others.length) {
+    const blockRepaired = await repairDecisionBlocks(
+      payload,
+      merge.result,
+      scope.blockIndexes,
+      mergeErrors,
+      normalizedIdeas,
+      { config, onUsage: hooks.onUsage, onStage: hooks.onStage },
+    );
+
+    if (blockRepaired) {
+      const blockRepairErrors = collectMergeBlockers(payload, blockRepaired);
+
+      if (!blockRepairErrors.length) {
+        hooks.onStage({ stage: 'repair', status: 'done' });
+
+        return {
+          ...blockRepaired.result,
+          source: config.provider,
+          warnings: [
+            ...blockRepaired.result.warnings,
+            `검증에 실패한 결정 ${scope.blockIndexes.length}개를 블록 단위로 복구했습니다.`,
+          ],
+        } satisfies PlanMergeAnalysisResult;
+      }
+
+      // 좁은 복구로도 안 되면 전체 복구로 내려가지 않는다. 호출을 더 쓰면서 구조를
+      // 뭉갤 위험만 사는 셈이다.
+      throw new Error(`Block repair validation failed: ${blockRepairErrors.join(', ')}`);
+    }
   }
 
   hooks.onStage({ stage: 'repair', status: 'started' });

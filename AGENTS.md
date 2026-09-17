@@ -24,7 +24,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 |---|---|---|
 | `npm ci` | 의존성 설치 | `postinstall`에서 `prisma generate` 자동 실행 |
 | `npm run lint` | ESLint | |
-| `npm run harness:quality` | **품질 회귀 게이트** (품질 12 + 결정 48 케이스) | 오프라인. 모델 호출 없음. 실패 시 exit 1 |
+| `npm run harness:quality` | **품질 회귀 게이트** (품질 12 + 결정 52 케이스) | 오프라인. 모델 호출 없음. 실패 시 exit 1 |
 | `npm run harness:local` | 로컬 하네스 단건 실행 + 프롬프트 미리보기 | 오프라인 |
 | `npm run build` | `next build` | `OPENAI_API_KEY`/`GMS_API_KEY`/`DATABASE_URL` 없어도 성공해야 함 |
 | `npm run dev` | 개발 서버 | |
@@ -81,6 +81,8 @@ This version has breaking changes — APIs, conventions, and file structure may 
    - **서버는 canonical 데이터와 파생값과 위조 검사만 한다. 판단은 만들지 않는다.** 되돌리기(변조된 원문을 검증된 값으로), 라벨 교정(`selectedOptionId`에 맞춘 `optionType`), ID 오타 복구(`draft-x_idea_idea_1` → `draft-x_idea_1`), 파생값 재계산(`missingSections`, `conflictLevel`)은 서버가 한다. "어떤 의견들이 한 결정인가", "무엇을 채택하는가", "무엇이 충돌인가"는 모델이 한다.
    - **`protocolVersion`과 `source`는 서버가 찍는다**(`ensureServerOwnedEnvelope`, 형태 복구 직후). 둘 다 배포에 대한 사실이라 모델이 말할 일이 아니다. 실측에서 복구 응답이 두 필드를 생략해 결정 블록이 멀쩡한데도 `protocolVersion must be 0.4`로 떨어졌다 — 그 전까지는 모델의 echo에 기대고 있었다. 병합·복구 프롬프트는 두 필드를 반환하지 말라고 한다(병합 규칙 2c, 복구 규칙 0).
    - **누락된 아이디어는 서버가 배치하지 않는다.** 어떤 옵션도 인용하지 않은 아이디어가 있으면 `ideaPlacement.ts`의 배치 판정 호출로 모델에 되묻는다. 한때 서버가 룰로 배치했다 — topic 문자열이 정확히 일치하는 블록을 찾고(실측 67건 중 **0건** 일치, merge 모델이 topic을 자기 문장으로 다시 쓰기 때문), 없으면 아이디어 하나로 블록을 만들고, `chooseServerSelectedIdea`로 채택안을 고르고, 충돌은 금지 방향 플래그 하나로 정했다. 블록당 아이디어가 1개라 전부 `selected`가 되어 **블록 20~24개가 전부 옵션 1개, 충돌 0**인 문서가 `200`으로 나갔다. 스키마는 완벽해서 검증기가 통과시키고 Quality Gate도 못 잡는다 — 충돌 0은 "이견이 없었다"와 구분되지 않는다. 이견을 한자리에 놓는 것이 이 제품의 존재 이유라서, 그게 사라진 결과는 성공이 아니다.
+   - **`coerceMergeResultShape`는 블록 하나 때문에 전체를 포기하지 않는다.** 옵션 배열이 없는 블록만 버리고, 그 아이디어들은 배치 판정이 다시 배치한다. 예전에는 전체를 포기해 canonical 아이디어도 붙지 않고 봉투도 안 찍혀서, 검증기가 모델 원본을 보며 `protocolVersion must be 0.4`·`normalizedIdeas must be an array` 같은 최상위 오류까지 쏟아냈다. 그러면 오류가 블록 범위로 좁혀지지 않아 전체 복구로 내려가고, 전체 복구가 문서를 재구성했다 — **실측에서 확인한 과잉 병합의 원인이 이것이다.** 규칙 2b·2c로 모델이 봉투·문서를 반환하지 않게 되자 이 경로가 더 잘 드러났다.
+   - **복구는 블록 단위로 먼저 시도한다.** 검증 오류가 전부 `decisionBlocks[N]` 접두사를 가지면(`partitionBlockerScope`) 깨진 블록만 프롬프트에 넣고 그 블록만 다시 받아 제자리에 끼운다(`buildDecisionBlockRepairPrompt` → `validateRepairedDecisionBlocks` → `applyRepairedDecisionBlocks`). **모델이 나머지 블록을 볼 수 없으니 뭉칠 수 없다** — 지시로는 막히지 않았다(원칙 3이 이미 "무관한 판단은 바꾸지 말라"고 말하는데 실측 5회에서 복구를 탄 2회가 모두 여러 섹션을 한 블록으로 접었다: Coherence 33%·62%). 범위 검증은 "요청한 인덱스마다 블록이 정확히 하나"뿐이고, 블록 내용은 갈아끼운 뒤 `validatePlanMergeAnalysis`가 본다. 블록이 바뀌면 본문도 다시 쓴다(`composeDocument`) — 이전 선택안을 보고 쓴 문서를 두지 않는다. 좁은 복구가 실패하면 전체 복구로 내려가지 않고 `502`다: 호출을 더 쓰면서 구조를 뭉갤 위험만 사는 셈이다.
    - **복구 프롬프트는 링크를 지우지 못한다.** 한때 원칙 1이 "REMOVING or RE-LINKING"이었고, 실측에서 복구 응답이 `sourceIdeaIds`를 23/23 지워 배치 상한에 걸렸다(스트리밍 검증 실행). 지침이 제거를 허용하니 모델이 제거로 "고친" 것이다. 지금은 재연결만 허용하고(1·1a·1b), 옵션 제거는 어떤 아이디어에도 연결할 수 없을 때만 경고와 함께 한다. 효과는 실모델 반복 실행으로만 잴 수 있다.
    - **누락 규모가 `PLACEMENT_RECOVERABLE_IDEA_LIMIT`(0.5)를 넘으면 배치 판정도 쓰지 않는다.** 그건 몇 개 빠진 게 아니라 merge가 실패한 것이고, 배치 호출은 블록 요약만 보기 때문에 전체 구조를 다시 세울 수 없다. `collectMergeBlockers`가 오류로 올려 repair 프롬프트로 보내고, repair도 실패하면 `502`다.
    - **최종 문서 본문도 서버가 쓰지 않는다.** `documentComposition.ts`의 문서 작성 호출이 확정된 결정들을 섹션 산문으로 만든다. 한때 서버가 채택안 문장을 `\n\n`으로 이어붙였고(`ensureFinalDocumentCoverage`, 제거됨), 실측에서 "문제 정의" 섹션 본문이 그 블록의 채택안 원문과 **글자 하나까지 같았다.** 그 폴백은 모델이 문서를 아예 내지 않은 것까지 가려서 `200`으로 만들었다 — repair 응답에 `finalDocumentSections`가 없었는데 아무도 몰랐다.
@@ -158,6 +160,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - **프롬프트에 같은 데이터를 두 번 넣지 않는다.** merge 프롬프트는 `normalizedIdeas`를 딱 한 번 직렬화한다. 한때 두 번 들어가 있어 호출마다 3천 토큰(전체 입력의 22%)을 낭비했다. 프롬프트를 고칠 때 `JSON.stringify(normalizedIdeas)`가 몇 번 나오는지 센다.
 - 프롬프트 캐시는 기대하지 않는다. normalize 프롬프트는 호출당 약 1,050 토큰이고 공통 접두사는 약 690 토큰으로 OpenAI 캐시 최소치(1,024)에 미달한다. 실측 적중률 0%다. 캐시를 노려 프롬프트를 늘리지 않는다 — 미달이면 늘린 만큼 그냥 더 낸다.
 - 분석 1회의 모델 호출 수는 `초안 수(normalize) + 1(merge) + 배치 판정 0~1회 + 문서 작성 1회 + repair 0~1회`다. 실측(초안 7개): 11회, 입력 20,297 / 출력 12,005 토큰, 80초. 배치 판정과 문서 작성은 블록 요약만 입력으로 받아서 merge(13k)보다 훨씬 작다 — 누락 몇 개 때문에 merge를 다시 돌리는 것보다 싸기 때문에 나눠 둔 것이다.
+- 복구 경로 진단은 서버 로그의 `[analyze/planmerge] merge blockers:`를 본다. 이 로그가 없었을 때 "블록 단위 복구가 왜 안 걸리는지"를 추측으로 메울 수밖에 없었고, 로그를 넣자 원인이 `coerceMergeResultShape`의 전체 포기였다는 것이 한 번에 나왔다.
 - 복구 프롬프트를 재연결만 허용하도록 바꾼 뒤 실측 5회(초안 7개, 2026-09-17): 200 4회 / 502 1회. "sourceIdeaIds 전부 제거" 실패는 **0건**(수정 전 약 9회 중 4건). 복구 경로 2회 중 1회는 아이디어 24개가 블록 3개로 접혔고(`section_coherence`로 잡는다), 502는 호출 한 건의 120초 타임아웃이었다(`reason: upstream_timeout`). n=5라 경향으로만 읽는다.
 - 분석 지연은 토큰 양이 아니라 배치 수가 결정한다. 기본 `NORMALIZE_CONCURRENCY`는 12이고 환경변수로 덮을 수 있다. 실측(초안 13개): 6 → 54초, 13 → 47초, 양쪽 모두 429 없음. **13%만 줄어드는 이유는 merge 호출 1건이 병렬화되지 않는 하한**이라서다 — 지연을 더 줄이려면 normalize 동시성이 아니라 merge 단계를 봐야 한다.
 

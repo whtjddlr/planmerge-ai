@@ -4,7 +4,7 @@
  * 되돌리기·라벨 교정·ID 오타 복구·파생값만 한다. "어떤 의견이 한 결정인가",
  * "무엇이 충돌인가"는 판단이라 여기서 하지 않는다(AGENTS.md 규칙 3).
  */
-import { sectionKeys } from './protocolInternals';
+import { isRecord, sectionKeys } from './protocolInternals';
 import type {
   NormalizedIdea,
   PlanMergeAnalysisResult,
@@ -33,6 +33,116 @@ export const PLACEMENT_RECOVERABLE_IDEA_LIMIT = 0.5;
 /** 누락 규모가 배치 판정으로 메울 수 있는 선을 넘었는가. */
 export function exceedsPlacementRecoveryLimit(unplacedIdeaCount: number, ideaCount: number): boolean {
   return ideaCount > 0 && unplacedIdeaCount > ideaCount * PLACEMENT_RECOVERABLE_IDEA_LIMIT;
+}
+
+/**
+ * 검증 오류를 "블록 하나로 좁혀지는 것"과 "그 밖의 것"으로 나눈다.
+ *
+ * 복구 프롬프트가 결과 전체를 다시 쓰게 하면 모델이 구조를 새로 짠다. 실측(5회)에서
+ * 복구를 탄 2회가 모두 여러 섹션의 의견을 한 블록으로 접었다 — 아이디어 24개가 블록
+ * 3개로, Section Coherence 33%. 지시로는 막히지 않았다(원칙 3이 "무관한 판단은 바꾸지
+ * 말라"고 이미 말한다). 그래서 **범위로 막는다**: 깨진 블록만 보여주면 나머지를 뭉갤
+ * 수 없다.
+ *
+ * 블록 오류는 전부 `decisionBlocks[N]` 접두사를 가진다. 인덱스로 집는다 — `id`는
+ * 누락·중복이 오류 대상이라 믿을 수 없다.
+ */
+export function partitionBlockerScope(errors: string[]) {
+  const blockIndexes = new Set<number>();
+  const others: string[] = [];
+
+  errors.forEach((error) => {
+    const match = /^decisionBlocks\[(\d+)\]/.exec(error);
+
+    if (match) {
+      blockIndexes.add(Number(match[1]));
+      return;
+    }
+
+    others.push(error);
+  });
+
+  return { blockIndexes: [...blockIndexes].sort((left, right) => left - right), others };
+}
+
+export type RepairedDecisionBlocks =
+  | { valid: true; blocksByIndex: Map<number, ProtocolDecisionBlock> }
+  | { valid: false; errors: string[] };
+
+/**
+ * 블록 단위 복구 응답을 받는다.
+ *
+ * 여기서 보는 것은 **범위**뿐이다: 요청한 인덱스마다 블록이 정확히 하나씩 왔는가.
+ * 이게 블록 병합을 막는 장치다 — 깨진 블록 2개를 1개로 합쳐 오면 인덱스가 비어 거부된다.
+ * 블록 내용의 적법성은 갈아끼운 뒤 `validatePlanMergeAnalysis`가 본다. 같은 검사를
+ * 두 번 쓰지 않는다.
+ */
+export function validateRepairedDecisionBlocks(
+  input: unknown,
+  requestedIndexes: number[],
+): RepairedDecisionBlocks {
+  if (!isRecord(input) || !Array.isArray(input.decisionBlocks)) {
+    return { valid: false, errors: ['decisionBlocks must be an array'] };
+  }
+
+  const errors: string[] = [];
+  const requested = new Set(requestedIndexes);
+  const blocksByIndex = new Map<number, ProtocolDecisionBlock>();
+
+  input.decisionBlocks.forEach((entry, position) => {
+    if (!isRecord(entry)) {
+      errors.push(`decisionBlocks[${position}] must be an object`);
+      return;
+    }
+
+    const repairIndex = typeof entry.repairIndex === 'number' && Number.isInteger(entry.repairIndex)
+      ? entry.repairIndex
+      : undefined;
+
+    if (repairIndex === undefined || !requested.has(repairIndex)) {
+      errors.push(`decisionBlocks[${position}].repairIndex must be one of ${requestedIndexes.join(', ')}`);
+      return;
+    }
+
+    if (blocksByIndex.has(repairIndex)) {
+      errors.push(`repairIndex ${repairIndex} was returned more than once`);
+      return;
+    }
+
+    const { repairIndex: _dropped, ...block } = entry;
+    void _dropped;
+
+    blocksByIndex.set(repairIndex, block as unknown as ProtocolDecisionBlock);
+  });
+
+  const missing = requestedIndexes.filter((index) => !blocksByIndex.has(index));
+
+  if (missing.length) {
+    errors.push(
+      `${missing.length} requested blocks were not returned: ${missing.join(', ')}. 깨진 블록을 합치거나 버리지 않고 각각 고쳐야 합니다.`,
+    );
+  }
+
+  if (errors.length) {
+    return { valid: false, errors };
+  }
+
+  return { valid: true, blocksByIndex };
+}
+
+/** 고쳐진 블록만 제자리에 갈아끼운다. 나머지 블록은 손대지 않는다. */
+export function applyRepairedDecisionBlocks(
+  result: PlanMergeAnalysisResult,
+  blocksByIndex: Map<number, ProtocolDecisionBlock>,
+): PlanMergeAnalysisResult {
+  return {
+    ...result,
+    decisionBlocks: result.decisionBlocks.map((block, index) => blocksByIndex.get(index) ?? block),
+    warnings: [
+      ...result.warnings,
+      `검증에 실패한 ${blocksByIndex.size}개 결정만 다시 받아 교체했습니다. 나머지 결정은 그대로입니다.`,
+    ],
+  };
 }
 
 /**
