@@ -45,6 +45,7 @@ import type {
   ProjectSettings,
 } from './lib/localWorkspace';
 import { AnalysisFailureError, generatePlanMergeAnalysis } from './lib/ai/planmergeAnalysisClient';
+import type { AnalysisProgressEvent, AnalysisStage } from './lib/ai/planmergeAnalysisClient';
 import { describeAnalysisCost } from './lib/analysisEstimate';
 import { recomposeDocumentSection } from './lib/ai/documentCompositionClient';
 import { replaceDocumentSection } from './lib/ai/documentComposition';
@@ -99,6 +100,8 @@ export default function App() {
   // 분석 실패는 2.4초 토스트로 사라지면 안 된다. 사용자가 재시도할지 수동으로
   // 진행할지 정할 때까지 화면에 남긴다.
   const [analysisError, setAnalysisError] = useState<AnalysisFailure | null>(null);
+  // 서버가 흘려보내는 진행 단계. JSON으로 답하는 서버(스텁, 옛 배포)면 비어 있고 정적 안내만 보인다.
+  const [analysisProgress, setAnalysisProgress] = useState<AnalysisProgressEvent[]>([]);
   // 사용자 키로 돌아갈 수 있는 제품이므로 이번 분석이 얼마를 썼는지 보여준다.
   // 서버에 키가 있으면 묻지 않고, 없으면 이 브라우저에 저장된 사용자 키를 쓴다.
   const [analysisKeyStatus, setAnalysisKeyStatus] = useState<AnalysisKeyStatus>({
@@ -573,13 +576,16 @@ export default function App() {
 
     setAnalysisStatus('analyzing');
     setAnalysisError(null);
+    setAnalysisProgress([]);
     showNotice('병합 분석을 실행합니다.');
 
     let analysisRun;
 
     try {
       [analysisRun] = await Promise.all([
-        generatePlanMergeAnalysis(payload),
+        generatePlanMergeAnalysis(payload, {
+          onProgress: (event) => setAnalysisProgress((current) => [...current, event]),
+        }),
         waitForLoadingTime(900),
       ]);
     } catch (error) {
@@ -1022,7 +1028,13 @@ export default function App() {
     }
 
     if (analysisStatus === 'analyzing') {
-      return <AnalysisLoadingView draftCount={workspaceState.drafts.length} costNotice={analysisCostLines} />;
+      return (
+        <AnalysisLoadingView
+          draftCount={workspaceState.drafts.length}
+          costNotice={analysisCostLines}
+          progress={analysisProgress}
+        />
+      );
     }
 
     if (!workspaceState.analysisResult) {
@@ -1423,7 +1435,44 @@ function mergeApprovedBlockIds(currentBlockIds: string[] | undefined, nextBlockI
   return [...new Set([...(currentBlockIds ?? []), ...nextBlockIds])];
 }
 
-function AnalysisLoadingView({ draftCount, costNotice }: { draftCount: number; costNotice: string[] }) {
+type StageView = { stage: AnalysisStage; title: string; optional?: boolean };
+
+const analysisStageViews: StageView[] = [
+  { stage: 'normalize', title: '초안마다 아이디어를 뽑고 금지 방향 여부를 판정합니다 (정규화, 초안 수만큼 병렬)' },
+  { stage: 'merge', title: '아이디어를 결정 블록으로 묶고 채택안·대안·충돌을 정합니다 (병합)' },
+  { stage: 'placement', title: '병합이 빠뜨린 아이디어가 있으면 어디에 둘지 다시 묻습니다 (배치 판정)', optional: true },
+  { stage: 'compose', title: '확정된 결정으로 섹션 본문을 씁니다 (문서 작성)' },
+  { stage: 'repair', title: '검증에 걸리면 한 번 복구를 시도하고, 그래도 실패하면 실패로 알립니다', optional: true },
+];
+
+/**
+ * 단계별 상태를 서버 이벤트에서 유도한다. 이벤트가 하나도 없으면 전부 pending —
+ * 그때는 시간이나 순서로 "진행 중"을 꾸며 내지 않는다(규칙 8).
+ */
+function deriveStageStates(progress: AnalysisProgressEvent[]) {
+  const states = new Map<AnalysisStage, { status: 'pending' | 'running' | 'done'; completed?: number; total?: number }>();
+
+  progress.forEach((event) => {
+    states.set(event.stage, {
+      status: event.status === 'done' ? 'done' : 'running',
+      ...(event.completed !== undefined ? { completed: event.completed } : {}),
+      ...(event.total !== undefined ? { total: event.total } : {}),
+    });
+  });
+
+  return states;
+}
+
+function AnalysisLoadingView({
+  draftCount,
+  costNotice,
+  progress,
+}: {
+  draftCount: number;
+  costNotice: string[];
+  progress: AnalysisProgressEvent[];
+}) {
+  const stageStates = deriveStageStates(progress);
   return (
     <main className="flex min-h-0 flex-1 items-center justify-center bg-white px-6 py-10">
       <div className="w-full max-w-xl rounded-md border border-blue-100 bg-blue-50/40 p-6">
@@ -1441,14 +1490,34 @@ function AnalysisLoadingView({ draftCount, costNotice }: { draftCount: number; c
           <div className="h-2 w-5/6 animate-pulse rounded-full bg-blue-100" />
           <div className="h-2 w-2/3 animate-pulse rounded-full bg-blue-100" />
         </div>
-        {/* 실제 파이프라인 순서다. 진행 중인 단계 표시는 서버 스트리밍이 붙어야 가능하다. */}
-        <div className="mt-4 space-y-1 text-xs leading-relaxed text-gray-500">
-          <div>1. 초안마다 아이디어를 뽑고 금지 방향 여부를 판정합니다 (정규화, 초안 수만큼 병렬).</div>
-          <div>2. 아이디어를 결정 블록으로 묶고 채택안·대안·충돌을 정합니다 (병합).</div>
-          <div>3. 병합이 빠뜨린 아이디어가 있으면 어디에 둘지 다시 묻습니다 (배치 판정).</div>
-          <div>4. 확정된 결정으로 섹션 본문을 씁니다 (문서 작성).</div>
-          <div>5. 검증에 걸리면 한 번 복구를 시도하고, 그래도 실패하면 실패로 알립니다.</div>
-        </div>
+        {/* 서버가 흘려보낸 단계만 상태를 바꾼다. 이벤트가 없으면 전부 대기 표시다. */}
+        <ol data-testid="analysis-progress" className="mt-4 space-y-1 text-xs leading-relaxed text-gray-500">
+          {analysisStageViews.map((view, index) => {
+            const state = stageStates.get(view.stage);
+            const marker = state?.status === 'done'
+              ? '✓'
+              : state?.status === 'running'
+                ? '…'
+                : view.optional
+                  ? '○'
+                  : '·';
+            const counter = view.stage === 'normalize' && state?.total
+              ? ` ${state.completed ?? 0}/${state.total}`
+              : '';
+
+            return (
+              <li
+                key={view.stage}
+                data-stage={view.stage}
+                data-status={state?.status ?? 'pending'}
+                className={state?.status === 'running' ? 'text-blue-700' : state?.status === 'done' ? 'text-gray-700' : undefined}
+              >
+                {marker} {index + 1}. {view.title}{counter}
+                {view.optional && !state ? ' — 필요할 때만' : ''}
+              </li>
+            );
+          })}
+        </ol>
         <AnalysisCostNotice lines={costNotice} />
       </div>
     </main>

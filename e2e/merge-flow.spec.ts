@@ -15,6 +15,7 @@ import {
   sectionNumberOf,
   seedWorkspaceWithoutAnalysis,
   stubAnalysis,
+  stubAnalysisStream,
   stubConfiguredProvider,
 } from './support/workspace';
 
@@ -32,6 +33,18 @@ test.describe('병합 결과 흐름', () => {
     await seedWorkspaceWithoutAnalysis(page);
     await stubConfiguredProvider(page);
     await stubAnalysis(page);
+  });
+
+  test('스트림으로 답하는 서버면 결과와 사용량을 마지막 이벤트에서 읽는다', async ({ page }) => {
+    // beforeEach의 JSON 스텁 위에 등록하므로 이 스텁이 먼저 잡는다.
+    await stubAnalysisStream(page);
+    await page.goto('/');
+    await page.getByRole('button', { name: /^병합 결과$/ }).click();
+    await runAnalysis(page);
+
+    await expect(page.getByText('Evidence Quality')).toBeVisible();
+    // 사용량은 헤더가 아니라 result 이벤트에서 왔다: 호출 9회, 17,331 + 9,919 토큰.
+    await expect(page.getByText(/모델 호출 9회, 토큰 27,250/)).toBeVisible();
   });
 
   test('실행 전 비용 안내는 호출 수와 직전 실측만 말하고 토큰을 추정하지 않는다', async ({ page }) => {

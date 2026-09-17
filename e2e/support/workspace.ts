@@ -105,6 +105,34 @@ export async function stubAnalysis(page: Page) {
   });
 }
 
+/**
+ * 분석 API를 NDJSON 스트림으로 가로챈다. 진행 이벤트 두 개 뒤에 결과가 온다.
+ * 진행 표시가 서버 이벤트에서만 나오는지(시간으로 꾸미지 않는지) 보는 스펙이 쓴다.
+ */
+export async function stubAnalysisStream(page: Page) {
+  const lines = [
+    { type: 'progress', stage: 'normalize', status: 'started', completed: 0, total: analysisPayload.drafts.length },
+    { type: 'progress', stage: 'normalize', status: 'done', completed: analysisPayload.drafts.length, total: analysisPayload.drafts.length },
+    { type: 'progress', stage: 'merge', status: 'started' },
+    { type: 'progress', stage: 'merge', status: 'done' },
+    { type: 'progress', stage: 'compose', status: 'started' },
+    { type: 'progress', stage: 'compose', status: 'done' },
+    {
+      type: 'result',
+      result: analysisResult,
+      usage: { inputTokens: 17331, outputTokens: 9919, reasoningTokens: 2628, calls: 9 },
+    },
+  ];
+
+  await page.route('**/api/analyze/planmerge', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/x-ndjson; charset=utf-8',
+      body: lines.map((line) => JSON.stringify(line)).join('\n') + '\n',
+    });
+  });
+}
+
 /** 분석 API가 키 미설정으로 실패하는 상태를 만든다. */
 export async function stubAnalysisUnconfigured(page: Page) {
   await page.route('**/api/analyze/planmerge', async (route) => {

@@ -17,6 +17,7 @@ import {
   ensureAssumptionBackedBlocksAreReviewed,
   ensureDecisionBlockShape,
   ensureOptionsCiteKnownIdeas,
+  ensureServerOwnedEnvelope,
   ensureServerOwnedSelectionSource,
   exceedsPlacementRecoveryLimit,
   sectionIsStale,
@@ -42,6 +43,7 @@ import {
   estimateAnalysisCalls,
   sanitizeStoredAnalysisUsage,
 } from '../src/planmerge/lib/analysisEstimate';
+import { parseAnalysisStreamLine } from '../src/planmerge/lib/ai/planmergeAnalysisClient';
 
 /** 문서 작성 검증을 돌린다. 모든 결정을 덮는 최소한의 올바른 출력을 기본으로 만든다. */
 function composeSections(
@@ -1482,6 +1484,61 @@ const cases: Array<{ id: string; run: () => string }> = [
       );
 
       return 'the pre-run notice shows call counts, the last measured usage, and the key source — never a token guess';
+    },
+  },
+  {
+    id: 'analysis-stream-lines-parse-strictly',
+    run: () => {
+      assert.deepEqual(
+        parseAnalysisStreamLine('{"type":"progress","stage":"normalize","status":"started","completed":3,"total":7}'),
+        { type: 'progress', event: { stage: 'normalize', status: 'started', completed: 3, total: 7 } },
+      );
+
+      const result = parseAnalysisStreamLine(
+        '{"type":"result","result":{"protocolVersion":"0.4"},"usage":{"inputTokens":1,"outputTokens":2,"reasoningTokens":0,"calls":3}}',
+      );
+      assert.equal(result?.type, 'result');
+      assert.deepEqual(result?.type === 'result' ? result.usage : undefined, { inputTokens: 1, outputTokens: 2, reasoningTokens: 0, calls: 3 });
+
+      const error = parseAnalysisStreamLine('{"type":"error","status":502,"code":"analysis_failed","errors":["x"]}');
+      assert.equal(error?.type, 'error');
+      assert.equal(error?.type === 'error' ? error.status : undefined, 502);
+
+      // 모르는 것은 버린다. 진행 표시 하나 때문에 분석을 깨지 않는다.
+      assert.equal(parseAnalysisStreamLine(''), undefined);
+      assert.equal(parseAnalysisStreamLine('not json'), undefined);
+      assert.equal(parseAnalysisStreamLine('{"type":"progress","stage":"teleport","status":"started"}'), undefined);
+      assert.equal(parseAnalysisStreamLine('{"type":"progress","stage":"merge","status":"maybe"}'), undefined);
+
+      return 'progress, result, and error lines parse; anything else is ignored rather than trusted';
+    },
+  },
+  {
+    id: 'server-stamps-protocol-version-and-source',
+    run: () => {
+      // 실측: 복구 응답이 protocolVersion과 source를 생략해 검증에서 떨어졌다.
+      const { protocolVersion: _version, source: _source, ...bare } = analysisResult;
+      void _version;
+      void _source;
+
+      const missing = validatePlanMergeAnalysis(analysisPayload, bare);
+      assert.equal(missing.valid, false);
+      assert(missing.errors.some((error) => error.includes('protocolVersion')), 'the bare envelope must fail as before');
+
+      const stamped = ensureServerOwnedEnvelope(bare as typeof analysisResult, 'openai');
+      assert.equal(stamped.protocolVersion, '0.4');
+      assert.equal(stamped.source, 'openai');
+      assert.equal(validatePlanMergeAnalysis(analysisPayload, stamped).valid, true);
+      assert.deepEqual(stamped.decisionBlocks, analysisResult.decisionBlocks, 'nothing else changes');
+
+      // 모델이 다른 제공자를 주장해도 서버가 덮는다. 봉투는 판단이 아니라 사실이다.
+      const claimed = ensureServerOwnedEnvelope({ ...analysisResult, source: 'gemini' }, 'openai');
+      assert.equal(claimed.source, 'openai');
+
+      // 이미 맞으면 같은 객체를 돌려준다. 불필요한 재렌더를 만들지 않는다.
+      assert.strictEqual(ensureServerOwnedEnvelope(stamped, 'openai'), stamped);
+
+      return 'protocolVersion and source come from the server, so a model that omits or invents them cannot fail validation';
     },
   },
 ];

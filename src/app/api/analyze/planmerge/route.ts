@@ -11,6 +11,7 @@ import {
   ensureDecisionBlockShape,
   exceedsPlacementRecoveryLimit,
   ensureOptionsCiteKnownIdeas,
+  ensureServerOwnedEnvelope,
   ensureServerOwnedSelectionSource,
   validateDraftNormalizeResult,
   validatePlanMergeAnalysis,
@@ -167,12 +168,43 @@ function usageHeaders(usage: ModelUsage) {
   return { [USAGE_HEADER]: JSON.stringify(usage) };
 }
 
+/**
+ * 진행 단계. 화면이 "지금 무엇을 하고 있는가"를 보여주는 데 쓴다.
+ *
+ * 분석은 80~120초가 걸리고 그동안 사용자는 정적 문장 하나를 봤다. 호출이 5종류로
+ * 나뉜 뒤로는 단계를 보여줄 수 있는데, 단일 요청 구조라 서버가 진행을 흘려보내야
+ * 한다. 클라이언트가 `Accept: application/x-ndjson`을 보내면 한 줄에 이벤트 하나씩
+ * 스트리밍하고, 아니면 예전처럼 JSON 한 덩어리를 준다 — 스크립트·스텁·curl은 바뀌지
+ * 않는다.
+ */
+export type AnalysisStage = 'normalize' | 'merge' | 'placement' | 'compose' | 'repair';
+
+export type AnalysisStageEvent = {
+  stage: AnalysisStage;
+  status: 'started' | 'done';
+  /** normalize에서만: 끝난 초안 수 / 전체. */
+  completed?: number;
+  total?: number;
+};
+
+type StageListener = (event: AnalysisStageEvent) => void;
+
+const NDJSON_MEDIA_TYPE = 'application/x-ndjson';
+
+function wantsStream(request: Request) {
+  return (request.headers.get('accept') ?? '').toLowerCase().includes(NDJSON_MEDIA_TYPE);
+}
+
 async function normalizeDrafts(
   payload: PlanMergeAnalysisPayload,
   config: GmsConfig,
   onUsage: (usage: ModelUsage) => void,
+  onStage: StageListener,
 ) {
   const drafts = payload.drafts.filter((draft) => draft.rawText.trim());
+  let completed = 0;
+
+  onStage({ stage: 'normalize', status: 'started', completed: 0, total: drafts.length });
 
   const normalizeResults = await mapWithConcurrency(
     drafts,
@@ -189,9 +221,14 @@ async function normalizeDrafts(
         throw new Error(`Normalize validation failed for ${draft.id}: ${validation.errors.join(', ')}`);
       }
 
+      completed += 1;
+      onStage({ stage: 'normalize', status: 'started', completed, total: drafts.length });
+
       return result.normalizedIdeas;
     },
   );
+
+  onStage({ stage: 'normalize', status: 'done', completed: drafts.length, total: drafts.length });
 
   return normalizeResults.flat();
 }
@@ -413,6 +450,7 @@ type BuiltMergeResult = {
 function repairMergeShape(
   result: PlanMergeAnalysisResult,
   normalizedIdeas: NormalizedIdea[],
+  source: PlanMergeAnalysisResult['source'],
 ): { result: PlanMergeAnalysisResult; unplacedIdeas: NormalizedIdea[] } | undefined {
   const coerced = coerceMergeResultShape(result);
 
@@ -420,7 +458,11 @@ function repairMergeShape(
     return undefined;
   }
 
-  const canonical = ensureMergeUsesCanonicalIdeas(coerced, normalizedIdeas);
+  // 봉투는 서버가 찍는다. 모델이 생략하거나 다른 값을 보내도 검증이 여기서 떨어지지 않는다.
+  const canonical = ensureMergeUsesCanonicalIdeas(
+    ensureServerOwnedEnvelope(coerced, source),
+    normalizedIdeas,
+  );
   const cited = ensureOptionsCiteKnownIdeas(canonical, normalizedIdeas);
   const shaped = ensureDecisionBlockShape(cited);
   const owned = ensureServerOwnedSelectionSource(shaped);
@@ -456,9 +498,9 @@ async function buildMergeResult(
   payload: PlanMergeAnalysisPayload,
   raw: PlanMergeAnalysisResult,
   normalizedIdeas: NormalizedIdea[],
-  options: { config: GmsConfig; onUsage: (usage: ModelUsage) => void },
+  options: { config: GmsConfig; onUsage: (usage: ModelUsage) => void; onStage: StageListener },
 ): Promise<BuiltMergeResult> {
-  const shaped = repairMergeShape(raw, normalizedIdeas);
+  const shaped = repairMergeShape(raw, normalizedIdeas, options.config.provider);
 
   if (!shaped) {
     return { result: raw, blockers: [] };
@@ -476,6 +518,8 @@ async function buildMergeResult(
         ],
       };
     }
+
+    options.onStage({ stage: 'placement', status: 'started' });
 
     const placementRaw = await callGmsJson<unknown>(
       buildIdeaPlacementPrompt(payload, current.decisionBlocks, shaped.unplacedIdeas),
@@ -503,11 +547,14 @@ async function buildMergeResult(
     }
 
     current = applyIdeaPlacements(current, placement.result, shaped.unplacedIdeas);
+    options.onStage({ stage: 'placement', status: 'done' });
   }
 
   if (!current.decisionBlocks.length) {
     return { result: finalizeMergeResult(current), blockers: [] };
   }
+
+  options.onStage({ stage: 'compose', status: 'started' });
 
   const compositionRaw = await callGmsJson<unknown>(
     buildDocumentCompositionPrompt(payload, current.decisionBlocks),
@@ -532,6 +579,8 @@ async function buildMergeResult(
       ],
     };
   }
+
+  options.onStage({ stage: 'compose', status: 'done' });
 
   return {
     result: finalizeMergeResult(applyDocumentComposition(current, composition.sections)),
@@ -590,67 +639,114 @@ export async function POST(request: Request) {
     );
   }
 
-  let usage = emptyModelUsage();
-  const collectUsage = (next: ModelUsage) => {
-    usage = addModelUsage(usage, next);
-  };
+  const failureMessage = `${config.model} 분석에 실패했습니다. 잠시 후 다시 시도해 주세요.`;
 
-  try {
-    const normalizedIdeas = await normalizeDrafts(payload, config, collectUsage);
-    const mergePrompt = buildMergeNormalizedIdeasPrompt(payload, normalizedIdeas);
-    const mergeResultRaw = await callGmsJson<PlanMergeAnalysisResult>(
-      mergePrompt,
-      { maxOutputTokens: MERGE_MAX_OUTPUT_TOKENS, config, onUsage: collectUsage },
-    );
-    const merge = await buildMergeResult(payload, mergeResultRaw, normalizedIdeas, {
-      config,
-      onUsage: collectUsage,
-    });
-    const mergeErrors = collectMergeBlockers(payload, merge);
+  if (!wantsStream(request)) {
+    let usage = emptyModelUsage();
 
-    if (!mergeErrors.length) {
-      return NextResponse.json(
-        {
-          ...merge.result,
-          source: config.provider,
-        } satisfies PlanMergeAnalysisResult,
-        { headers: usageHeaders(usage) },
-      );
+    try {
+      const result = await runAnalysisPipeline(payload, config, {
+        onUsage: (next) => { usage = addModelUsage(usage, next); },
+        onStage: () => {},
+      });
+
+      return NextResponse.json(result, { headers: usageHeaders(usage) });
+    } catch (error) {
+      // 업스트림 오류 본문에는 게이트웨이 내부 정보가 섞일 수 있어 서버 로그에만 남긴다.
+      console.error('[analyze/planmerge] analysis failed:', error);
+
+      return failureResponse(502, 'analysis_failed', failureMessage);
     }
-
-    const repairedResultRaw = await callGmsJson<PlanMergeAnalysisResult>(
-      buildPlanMergeRepairPrompt(payload, merge.result, mergeErrors, normalizedIdeas),
-      { maxOutputTokens: MERGE_MAX_OUTPUT_TOKENS, config, onUsage: collectUsage },
-    );
-    const repaired = await buildMergeResult(payload, repairedResultRaw, normalizedIdeas, {
-      config,
-      onUsage: collectUsage,
-    });
-    const repairErrors = collectMergeBlockers(payload, repaired);
-
-    if (repairErrors.length) {
-      throw new Error(`Repair validation failed: ${repairErrors.join(', ')}`);
-    }
-
-    return NextResponse.json(
-      {
-        ...repaired.result,
-        source: config.provider,
-        warnings: [
-          ...repaired.result.warnings,
-          '1차 merge 검증 실패 후 repair prompt로 복구했습니다.',
-        ],
-      } satisfies PlanMergeAnalysisResult,
-      { headers: usageHeaders(usage) },
-    );
-  } catch (error) {
-    // 업스트림 오류 본문에는 게이트웨이 내부 정보가 섞일 수 있어 서버 로그에만 남긴다.
-    console.error('[analyze/planmerge] analysis failed:', error);
-
-    return failureResponse(
-      502,
-      'analysis_failed',
-      `${config.model} 분석에 실패했습니다. 잠시 후 다시 시도해 주세요.`,
-    );
   }
+
+  // NDJSON: 진행 이벤트 → result 또는 error. 스트림이 시작되면 상태 코드를 바꿀 수 없으므로
+  // 실패도 본문 이벤트로 알리고, 사용량은 마지막 result 이벤트에 싣는다(헤더는 이미 나갔다).
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const send = (event: Record<string, unknown>) => {
+        controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+      };
+      let usage = emptyModelUsage();
+
+      try {
+        const result = await runAnalysisPipeline(payload, config, {
+          onUsage: (next) => { usage = addModelUsage(usage, next); },
+          onStage: (event) => send({ type: 'progress', ...event }),
+        });
+
+        send({ type: 'result', result, usage });
+      } catch (error) {
+        console.error('[analyze/planmerge] analysis failed:', error);
+        send({ type: 'error', status: 502, code: 'analysis_failed', errors: [failureMessage] });
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': `${NDJSON_MEDIA_TYPE}; charset=utf-8`,
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+    },
+  });
+}
+
+/**
+ * 정규화 → 병합 → (배치) → 문서 작성 → 검증 → (복구). 성공하면 결과, 실패하면 throw.
+ * JSON 응답과 NDJSON 스트림이 같은 함수를 부르므로 두 경로가 갈라질 수 없다.
+ */
+async function runAnalysisPipeline(
+  payload: PlanMergeAnalysisPayload,
+  config: GmsConfig,
+  hooks: { onUsage: (usage: ModelUsage) => void; onStage: StageListener },
+): Promise<PlanMergeAnalysisResult> {
+  const normalizedIdeas = await normalizeDrafts(payload, config, hooks.onUsage, hooks.onStage);
+
+  hooks.onStage({ stage: 'merge', status: 'started' });
+  const mergeResultRaw = await callGmsJson<PlanMergeAnalysisResult>(
+    buildMergeNormalizedIdeasPrompt(payload, normalizedIdeas),
+    { maxOutputTokens: MERGE_MAX_OUTPUT_TOKENS, config, onUsage: hooks.onUsage },
+  );
+  hooks.onStage({ stage: 'merge', status: 'done' });
+
+  const merge = await buildMergeResult(payload, mergeResultRaw, normalizedIdeas, {
+    config,
+    onUsage: hooks.onUsage,
+    onStage: hooks.onStage,
+  });
+  const mergeErrors = collectMergeBlockers(payload, merge);
+
+  if (!mergeErrors.length) {
+    return { ...merge.result, source: config.provider } satisfies PlanMergeAnalysisResult;
+  }
+
+  hooks.onStage({ stage: 'repair', status: 'started' });
+  const repairedResultRaw = await callGmsJson<PlanMergeAnalysisResult>(
+    buildPlanMergeRepairPrompt(payload, merge.result, mergeErrors, normalizedIdeas),
+    { maxOutputTokens: MERGE_MAX_OUTPUT_TOKENS, config, onUsage: hooks.onUsage },
+  );
+  const repaired = await buildMergeResult(payload, repairedResultRaw, normalizedIdeas, {
+    config,
+    onUsage: hooks.onUsage,
+    onStage: hooks.onStage,
+  });
+  const repairErrors = collectMergeBlockers(payload, repaired);
+
+  if (repairErrors.length) {
+    throw new Error(`Repair validation failed: ${repairErrors.join(', ')}`);
+  }
+
+  hooks.onStage({ stage: 'repair', status: 'done' });
+
+  return {
+    ...repaired.result,
+    source: config.provider,
+    warnings: [
+      ...repaired.result.warnings,
+      '1차 merge 검증 실패 후 repair prompt로 복구했습니다.',
+    ],
+  } satisfies PlanMergeAnalysisResult;
 }
