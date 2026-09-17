@@ -45,9 +45,9 @@ import type {
   ProjectSettings,
 } from './lib/localWorkspace';
 import { AnalysisFailureError, generatePlanMergeAnalysis } from './lib/ai/planmergeAnalysisClient';
+import { describeAnalysisCost } from './lib/analysisEstimate';
 import { recomposeDocumentSection } from './lib/ai/documentCompositionClient';
 import { replaceDocumentSection } from './lib/ai/documentComposition';
-import type { AnalysisTokenUsage } from './lib/ai/planmergeAnalysisClient';
 import { AnalysisKeySetup, type AnalysisKeyStatus } from './components/AnalysisKeySetup';
 import {
   fetchServerAnalysisStatus,
@@ -100,7 +100,6 @@ export default function App() {
   // 진행할지 정할 때까지 화면에 남긴다.
   const [analysisError, setAnalysisError] = useState<AnalysisFailure | null>(null);
   // 사용자 키로 돌아갈 수 있는 제품이므로 이번 분석이 얼마를 썼는지 보여준다.
-  const [analysisUsage, setAnalysisUsage] = useState<AnalysisTokenUsage | null>(null);
   // 서버에 키가 있으면 묻지 않고, 없으면 이 브라우저에 저장된 사용자 키를 쓴다.
   const [analysisKeyStatus, setAnalysisKeyStatus] = useState<AnalysisKeyStatus>({
     serverConfigured: false,
@@ -108,6 +107,8 @@ export default function App() {
     loaded: false,
   });
   const [workspaceState, setWorkspaceState] = useState(createEmptyWorkspaceState);
+  // 직전 분석의 실측 사용량. 워크스페이스에 저장되므로 새로고침 뒤에도 남는다.
+  const analysisUsage = workspaceState.lastAnalysisUsage ?? null;
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
   const [hasLoadedWorkspace, setHasLoadedWorkspace] = useState(false);
   const [sharedWorkspaceId, setSharedWorkspaceId] = useState<string | null>(null);
@@ -134,6 +135,16 @@ export default function App() {
     [workspaceState.analysisResult, workspaceState.drafts],
   );
   const selectedSection = mergeSections.find((section) => section.number === activeSection) ?? mergeSections[0];
+  // 실행 전 비용 안내. 토큰은 추정하지 않고, 호출 수·직전 실측·키 출처만 말한다.
+  const analysisCostLines = describeAnalysisCost({
+    draftCount: workspaceState.drafts.length,
+    lastUsage: workspaceState.lastAnalysisUsage,
+    keySource: analysisKeyStatus.serverConfigured
+      ? 'server'
+      : analysisKeyStatus.credentials
+        ? 'request'
+        : 'none',
+  });
   const activeSectionBlockIds = useMemo(() => getSectionDecisionBlockIds(selectedSection), [selectedSection]);
   const approvalStatus = useMemo(() => {
     const approvedBlockIds = new Set(workspaceState.approvedBlockIds ?? []);
@@ -587,7 +598,6 @@ export default function App() {
       return;
     }
 
-    setAnalysisUsage(analysisRun.usage ?? null);
     setWorkspaceState((current) => ({
       ...current,
       analysisRunId: current.analysisRunId + 1,
@@ -596,6 +606,7 @@ export default function App() {
         status: draft.rawText.trim() ? 'parsed' : draft.status,
       })),
       analysisResult: analysisRun.result,
+      lastAnalysisUsage: analysisRun.usage,
       approvedBlockIds: [],
       decisionLogs: [],
     }));
@@ -970,6 +981,7 @@ export default function App() {
       return (
         <DraftSubmitPage
           analysisStatus={analysisStatus}
+          costNotice={analysisCostLines}
           drafts={workspaceState.drafts}
           mode={sharedMode ? 'shared' : 'local'}
           ownerShareAccess={sharedMode ? null : ownedShareAccess}
@@ -1010,13 +1022,14 @@ export default function App() {
     }
 
     if (analysisStatus === 'analyzing') {
-      return <AnalysisLoadingView draftCount={workspaceState.drafts.length} />;
+      return <AnalysisLoadingView draftCount={workspaceState.drafts.length} costNotice={analysisCostLines} />;
     }
 
     if (!workspaceState.analysisResult) {
       return (
         <MergePreparationView
           draftCount={workspaceState.drafts.length}
+          costNotice={analysisCostLines}
           onAddDraft={() => changeView('drafts')}
           onRunAnalysis={reanalyze}
           readOnly={sharedMode}
@@ -1165,13 +1178,26 @@ export default function App() {
   );
 }
 
+function AnalysisCostNotice({ lines }: { lines: string[] }) {
+  return (
+    <ul
+      data-testid="analysis-cost-notice"
+      className="mt-4 space-y-1 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs leading-relaxed text-gray-600"
+    >
+      {lines.map((line) => <li key={line}>{line}</li>)}
+    </ul>
+  );
+}
+
 function MergePreparationView({
   draftCount,
+  costNotice,
   onAddDraft,
   onRunAnalysis,
   readOnly,
 }: {
   draftCount: number;
+  costNotice: string[];
   onAddDraft: () => void;
   onRunAnalysis: () => void;
   readOnly: boolean;
@@ -1206,6 +1232,7 @@ function MergePreparationView({
               </div>
             </div>
 
+            {hasDrafts && <AnalysisCostNotice lines={costNotice} />}
             <div className="mt-6 flex flex-col gap-2 sm:flex-row">
               <button
                 type="button"
@@ -1396,7 +1423,7 @@ function mergeApprovedBlockIds(currentBlockIds: string[] | undefined, nextBlockI
   return [...new Set([...(currentBlockIds ?? []), ...nextBlockIds])];
 }
 
-function AnalysisLoadingView({ draftCount }: { draftCount: number }) {
+function AnalysisLoadingView({ draftCount, costNotice }: { draftCount: number; costNotice: string[] }) {
   return (
     <main className="flex min-h-0 flex-1 items-center justify-center bg-white px-6 py-10">
       <div className="w-full max-w-xl rounded-md border border-blue-100 bg-blue-50/40 p-6">
@@ -1414,11 +1441,15 @@ function AnalysisLoadingView({ draftCount }: { draftCount: number }) {
           <div className="h-2 w-5/6 animate-pulse rounded-full bg-blue-100" />
           <div className="h-2 w-2/3 animate-pulse rounded-full bg-blue-100" />
         </div>
+        {/* 실제 파이프라인 순서다. 진행 중인 단계 표시는 서버 스트리밍이 붙어야 가능하다. */}
         <div className="mt-4 space-y-1 text-xs leading-relaxed text-gray-500">
-          <div>1. 초안을 섹션별 아이디어 후보로 나눕니다.</div>
-          <div>2. 유사 의견과 충돌 의견을 묶습니다.</div>
-          <div>3. Decision Block 기준으로 결과 화면을 갱신합니다.</div>
+          <div>1. 초안마다 아이디어를 뽑고 금지 방향 여부를 판정합니다 (정규화, 초안 수만큼 병렬).</div>
+          <div>2. 아이디어를 결정 블록으로 묶고 채택안·대안·충돌을 정합니다 (병합).</div>
+          <div>3. 병합이 빠뜨린 아이디어가 있으면 어디에 둘지 다시 묻습니다 (배치 판정).</div>
+          <div>4. 확정된 결정으로 섹션 본문을 씁니다 (문서 작성).</div>
+          <div>5. 검증에 걸리면 한 번 복구를 시도하고, 그래도 실패하면 실패로 알립니다.</div>
         </div>
+        <AnalysisCostNotice lines={costNotice} />
       </div>
     </main>
   );

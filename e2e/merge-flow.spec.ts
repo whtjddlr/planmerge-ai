@@ -34,6 +34,27 @@ test.describe('병합 결과 흐름', () => {
     await stubAnalysis(page);
   });
 
+  test('실행 전 비용 안내는 호출 수와 직전 실측만 말하고 토큰을 추정하지 않는다', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: /^병합 결과$/ }).click();
+
+    // 결과가 없을 때: 호출 수는 파이프라인 구조에서 나온다(초안 7개 → 9~11회).
+    const notice = page.getByTestId('analysis-cost-notice');
+    await expect(notice).toBeVisible();
+    await expect(notice).toContainText(`모델 호출 ${analysisPayload.drafts.length + 2}~${analysisPayload.drafts.length + 4}회 예상`);
+    await expect(notice).toContainText('미리 추정하지 않습니다');
+    await expect(notice).not.toContainText(/토큰 [\d,]+/);
+
+    await runAnalysis(page);
+    await expect(page.getByText('Evidence Quality')).toBeVisible();
+
+    // 결과가 있을 때: 스텁이 헤더로 준 실측(호출 8회, 17,331 + 9,919 토큰)만 보여준다.
+    await page.getByRole('button', { name: /^초안 입력$/ }).click();
+    const afterRun = page.getByTestId('analysis-cost-notice');
+    await expect(afterRun).toBeVisible();
+    await expect(afterRun).toContainText('직전 실행 실측: 호출 8회, 토큰 27,250');
+  });
+
   test('서버에 키가 있으면 등록을 묻지 않고, 결과 지표는 실제 데이터에서 계산된다', async ({ page }) => {
     await analyzeAndWait(page);
 

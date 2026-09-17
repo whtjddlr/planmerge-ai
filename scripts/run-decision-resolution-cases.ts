@@ -37,6 +37,11 @@ import {
 } from '../src/planmerge/lib/ai/ideaPlacement';
 import { sampleDrafts, sampleProjectSettings } from '../src/planmerge/lib/localWorkspace';
 import { deriveParticipantKey, resolveParticipantKey } from '../src/server/participantKey';
+import {
+  describeAnalysisCost,
+  estimateAnalysisCalls,
+  sanitizeStoredAnalysisUsage,
+} from '../src/planmerge/lib/analysisEstimate';
 
 /** 문서 작성 검증을 돌린다. 모든 결정을 덮는 최소한의 올바른 출력을 기본으로 만든다. */
 function composeSections(
@@ -1438,6 +1443,45 @@ const cases: Array<{ id: string; run: () => string }> = [
       }
 
       return 'signed-in participants get one HMAC key per account per workspace; guests keep the client key';
+    },
+  },
+  {
+    id: 'cost-notice-states-only-what-is-known',
+    run: () => {
+      // 호출 수는 파이프라인 구조에서 결정적으로 나온다: 초안 N + 병합 1 + 문서 1, 배치·복구 0~1.
+      assert.deepEqual(
+        [estimateAnalysisCalls(7).min, estimateAnalysisCalls(7).max],
+        [9, 11],
+      );
+
+      const before = describeAnalysisCost({ draftCount: 7, lastUsage: undefined, keySource: 'request' });
+
+      assert.match(before[0], /9~11회/);
+      assert.match(before[0], /초안 7개/);
+      // 토큰 추정치는 어디에도 없다. 숫자가 화면에 있으면 실측처럼 읽힌다(규칙 8).
+      assert.doesNotMatch(before[0], /토큰/);
+      assert.match(before[1], /미리 추정하지 않습니다/);
+      assert.match(before[2], /내 API 키/);
+
+      const after = describeAnalysisCost({
+        draftCount: 7,
+        lastUsage: { inputTokens: 20297, outputTokens: 12005, reasoningTokens: 4543, calls: 11 },
+        keySource: 'server',
+      });
+
+      assert.match(after[1], /호출 11회/);
+      assert.match(after[1], /32,302/, 'the only token figure shown is the measured one');
+      assert.match(after[2], /서버에 설정된 키/);
+
+      // 저장된 사용량이 깨져 있으면 버린다. 사용량 때문에 워크스페이스를 잃지 않는다.
+      assert.equal(sanitizeStoredAnalysisUsage({ inputTokens: -1, outputTokens: 1, reasoningTokens: 0, calls: 1 }), undefined);
+      assert.equal(sanitizeStoredAnalysisUsage({ inputTokens: 1, outputTokens: 1, calls: 1 }), undefined);
+      assert.deepEqual(
+        sanitizeStoredAnalysisUsage({ inputTokens: 1, outputTokens: 2, reasoningTokens: 0, calls: 3 }),
+        { inputTokens: 1, outputTokens: 2, reasoningTokens: 0, calls: 3 },
+      );
+
+      return 'the pre-run notice shows call counts, the last measured usage, and the key source — never a token guess';
     },
   },
 ];

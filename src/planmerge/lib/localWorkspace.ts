@@ -4,6 +4,7 @@ import {
   validatePlanMergeAnalysis,
 } from './ai/planmergeProtocol';
 import type { PlanMergeAnalysisResult } from './ai/planmergeProtocol';
+import { sanitizeStoredAnalysisUsage, type StoredAnalysisUsage } from './analysisEstimate';
 
 export type ProjectSettings = {
   title: string;
@@ -56,6 +57,11 @@ export type LocalWorkspaceState = {
   drafts: LocalDraftSubmission[];
   analysisResult?: PlanMergeAnalysisResult;
   approvedBlockIds?: string[];
+  /**
+   * 직전 분석이 실제로 쓴 토큰·호출 수. 서버가 헤더로 준 실측값이다.
+   * 다음 실행 전 비용 안내가 "직전 실행 실측"으로 보여준다 — 추정치가 아니라서 저장한다.
+   */
+  lastAnalysisUsage?: StoredAnalysisUsage;
   decisionLogs: LocalDecisionLog[];
 };
 
@@ -700,6 +706,7 @@ function sanitizeStoredWorkspaceState(value: unknown): StoredWorkspaceParseResul
       drafts: storedDrafts,
       analysisResult,
       approvedBlockIds: sanitizeApprovedBlockIds(value.approvedBlockIds, analysisResult),
+      lastAnalysisUsage: sanitizeStoredAnalysisUsage(value.lastAnalysisUsage),
       decisionLogs: (Array.isArray(value.decisionLogs) ? value.decisionLogs : [])
         .filter(isValidDecisionLog)
         .map((log) => ({
@@ -1099,6 +1106,7 @@ export function parseWorkspaceImport(rawText: string): WorkspaceImportResult {
       drafts,
       analysisResult,
       approvedBlockIds,
+      lastAnalysisUsage: sanitizeStoredAnalysisUsage(workspace.lastAnalysisUsage),
       decisionLogs: decisionLogs.map((log) => ({
         ...log,
         analysisRunId: log.analysisRunId ?? analysisRunId,

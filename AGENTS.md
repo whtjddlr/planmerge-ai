@@ -24,7 +24,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 |---|---|---|
 | `npm ci` | 의존성 설치 | `postinstall`에서 `prisma generate` 자동 실행 |
 | `npm run lint` | ESLint | |
-| `npm run harness:quality` | **품질 회귀 게이트** (품질 12 + 결정 43 케이스) | 오프라인. 모델 호출 없음. 실패 시 exit 1 |
+| `npm run harness:quality` | **품질 회귀 게이트** (품질 12 + 결정 44 케이스) | 오프라인. 모델 호출 없음. 실패 시 exit 1 |
 | `npm run harness:local` | 로컬 하네스 단건 실행 + 프롬프트 미리보기 | 오프라인 |
 | `npm run build` | `next build` | `OPENAI_API_KEY`/`GMS_API_KEY`/`DATABASE_URL` 없어도 성공해야 함 |
 | `npm run dev` | 개발 서버 | |
@@ -91,6 +91,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
    - 키는 워크스페이스 상태(`LocalWorkspaceState`)에 넣지 않는다. 내보내기·공유 스냅샷에 섞이면 안 되므로 별도 localStorage 항목으로 분리해 둔다.
    - 화면에는 `maskApiKey`를 거친 형태만 보여준다.
 8. **시연용 고정값 금지.** 화면에 보이는 수치는 실제 데이터에서 계산한다. 과거에 `verifiedSampleSummary`가 `conflictCount: 1`, `qualityScore: 100`을 상수로 들고 있었고 툴바에는 "3개의 AI 초안에서 42개의 아이디어를 추출했습니다"가 박혀 있었다. 샘플 워크스페이스도 하네스가 만든 병합 결과를 미리 실어 실제 분석과 똑같이 렌더링했다. 이런 값은 분석을 돌리기 전에는 알 수 없으므로 화면에 두지 않는다.
+   - **실행 전 비용 안내(`describeAnalysisCost`)는 토큰을 추정하지 않는다.** 결정적으로 아는 것만 말한다 — 호출 수(초안 N + 병합 1 + 문서 1, 배치·복구 0~1), 직전 실행의 **실측** 사용량(`LocalWorkspaceState.lastAnalysisUsage`에 저장), 어느 키로 실행되는가. 추정 토큰 수를 숫자로 내놓으면 화면에서 실측처럼 읽힌다.
    - `src/planmerge/data/mergeResult.ts`는 **타입만** 내보낸다. 한때 시연용 문서 12섹션(`sections`)과 결정 trace 5개(`decisionTraces`)가 여기 상수로 있었고, `DecisionPanel`은 실제 블록이 없는 섹션에서 `getDecisionTrace()`로 떨어져 이 고정값을 렌더링했다. 실제 분석이 "개요"를 비워 두면 화면에 "자동 선택 — 세 초안 모두 …"라는 가짜 근거가 떴다(이번 실측은 9/12 섹션이었으니 실제로 보이는 화면이었다). 그것도 없으면 섹션 본문을 "자동 선택"으로 포장해 "여러 초안에서 의미가 유사한 내용을 묶어 정리했습니다"라고 적었다. 지금 `getDecisionTrace`는 결정이 없으면 **없다고만** 말한다 — 왜 없는지(초안이 부족했다 등)를 추측해 적는 것도 날조다.
 9. **금지 방향 위반은 Quality Gate를 차단한다.** `analysisQuality.ts`는 선택안의 근거 아이디어가 `forbiddenDirectionConflict.conflicts`인 블록을 세어 `forbidden_direction_compliance` 메트릭과 `blocked` finding을 만들고, 등급을 스키마 오류와 같은 하드 블록으로 내린다. 평균에 희석되게 두면 12개 중 1건 위반이 100점 Ready로 나온다(실제로 그랬다).
    - 사람이 충돌 의견을 선택안으로 덮어쓰는 것은 정당한 권한이지만 위반을 해소하지는 않는다. `applyDecisionOptionOverride`는 충돌 옵션을 선택하면 `needsHumanReview`를 유지한다.

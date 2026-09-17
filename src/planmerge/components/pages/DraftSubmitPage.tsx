@@ -25,6 +25,8 @@ type DraftSubmitPageProps = {
   onImportSharedDraft?: (draft: DraftFormInput) => boolean;
   onRunAnalysis: () => void;
   onSubmitDraft: (draft: DraftFormInput) => void;
+  /** 실행 전 비용 안내 — 호출 수, 직전 실측, 키 출처. 토큰 추정치는 없다. */
+  costNotice?: string[];
 };
 
 type RemoteDraftsState = {
@@ -59,6 +61,7 @@ export function DraftSubmitPage({
   onImportSharedDraft,
   onRunAnalysis,
   onSubmitDraft,
+  costNotice,
 }: DraftSubmitPageProps) {
   const [form, setForm] = useState<DraftFormInput>(initialForm);
   const [anonymousClientId] = useState(() => getAnonymousClientId());
@@ -421,6 +424,14 @@ export function DraftSubmitPage({
               >
                 {analysisStatus === 'analyzing' ? '분석 중' : '병합 분석 실행'}
               </button>
+              {costNotice && canAnalyze && (
+                <ul
+                  data-testid="analysis-cost-notice"
+                  className="mt-3 space-y-1 text-xs leading-relaxed text-gray-500"
+                >
+                  {costNotice.map((line) => <li key={line}>{line}</li>)}
+                </ul>
+              )}
             </>
           )}
         </aside>
