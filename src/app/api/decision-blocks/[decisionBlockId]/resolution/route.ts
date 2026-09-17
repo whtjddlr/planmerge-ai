@@ -21,7 +21,6 @@ export const maxDuration = 120;
 
 const RATE_LIMIT = { limit: 10, windowMs: 60_000 };
 const DEFAULT_DECISION_MODEL = 'gpt-5.6-luna';
-const DEFAULT_OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 
 type RouteContext = {
   params: Promise<{
@@ -185,29 +184,19 @@ export async function POST(request: Request, context: RouteContext) {
   }
 }
 
+/**
+ * Decision Room이 쓸 키와 모델.
+ *
+ * 키는 `getAnalysisConfig(request)` 하나에서만 온다(규칙 7): 서버 키가 있으면 그것,
+ * 없으면 사용자가 브라우저에서 보낸 자기 키. 한때 이 함수가 `process.env.OPENAI_API_KEY`를
+ * 직접 읽는 두 번째 경로를 갖고 있었다 — 같은 파일 안에 키 해석이 두 갈래라 한쪽만
+ * 고치는 사고가 나기 좋은 구조였다. 키를 읽는 코드는 `gmsServer.ts` 한 곳이면 된다.
+ *
+ * 모델은 다르다. Decision Room은 분석 모델과 별도로 `DECISION_MODEL`을 둘 수 있고,
+ * 그건 자격증명이 아니라 설정이라 여기서 읽는다. 사용자 키로 돌 때는 그 키가 접근할 수
+ * 있는 모델을 등록 시점에 확인해 두었으므로 함께 온 모델을 쓴다.
+ */
 function getDecisionProviderConfig(request: Request): DecisionProviderConfig | null {
-  const serverModel = firstNonEmpty(
-    process.env.DECISION_MODEL,
-    process.env.OPENAI_DECISION_MODEL,
-    process.env.GMS_DECISION_MODEL,
-  );
-  const openAiApiKey = normalizeSecret(process.env.OPENAI_API_KEY);
-
-  if (openAiApiKey) {
-    return {
-      source: 'openai',
-      apiKey: openAiApiKey,
-      apiUrl: firstNonEmpty(
-        process.env.OPENAI_RESPONSES_URL,
-        DEFAULT_OPENAI_RESPONSES_URL,
-      ),
-      model: serverModel || DEFAULT_DECISION_MODEL,
-      providerLabel: 'OpenAI Responses API',
-    };
-  }
-
-  // 서버 키가 없으면 사용자가 브라우저에서 보낸 자기 키로 해결한다.
-  // 그 키가 접근할 수 있는 모델은 등록 시점에 확인해 두었으므로 함께 온 모델을 쓴다.
   const config = getAnalysisConfig(request);
   const apiKey = normalizeSecret(config.apiKey);
 
@@ -215,13 +204,17 @@ function getDecisionProviderConfig(request: Request): DecisionProviderConfig | n
     return null;
   }
 
+  const serverModel = firstNonEmpty(
+    process.env.DECISION_MODEL,
+    process.env.OPENAI_DECISION_MODEL,
+    process.env.GMS_DECISION_MODEL,
+  );
+
   return {
     source: config.provider,
     apiKey,
     apiUrl: config.apiUrl,
-    model: config.keySource === 'request'
-      ? config.model
-      : (serverModel || DEFAULT_DECISION_MODEL),
+    model: config.keySource === 'request' ? config.model : (serverModel || DEFAULT_DECISION_MODEL),
     providerLabel: config.provider === 'openai' ? 'OpenAI Responses API' : 'GMS Responses API',
   };
 }

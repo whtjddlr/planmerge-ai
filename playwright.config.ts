@@ -1,5 +1,9 @@
 import { defineConfig, devices } from '@playwright/test';
 
+// 로그인 스펙의 test.skip은 dev 서버가 아니라 이 러너 프로세스의 env를 본다. 여기서 켜야
+// 스펙이 돌고, 아래 webServer.env가 같은 값을 서버에 넘겨 둘이 어긋나지 않는다.
+process.env.AUTH_TEST_LOGIN = process.env.AUTH_TEST_LOGIN ?? '1';
+
 export default defineConfig({
   testDir: 'e2e',
   retries: process.env.CI ? 1 : 0,
@@ -31,6 +35,11 @@ export default defineConfig({
       OPENAI_API_KEY: '',
       GMS_API_KEY: '',
       ANALYSIS_PROVIDER: 'openai',
+      // 로그인 스펙은 이 값이 없으면 스스로 skip한다. 한때 여기 빠져 있어서 "7 passed,
+      // 1 skipped"가 정상처럼 보였고 로그인 흐름은 어디서도 검증되지 않았다.
+      // 테스트 Credentials provider는 DB 없이(JWT 세션) 동작하고, src/auth.ts가
+      // production에서는 이 스위치를 거부한다.
+      AUTH_TEST_LOGIN: process.env.AUTH_TEST_LOGIN,
     },
     reuseExistingServer: false,
     timeout: 120_000,

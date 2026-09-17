@@ -28,7 +28,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 | `npm run harness:local` | 로컬 하네스 단건 실행 + 프롬프트 미리보기 | 오프라인 |
 | `npm run build` | `next build` | `OPENAI_API_KEY`/`GMS_API_KEY`/`DATABASE_URL` 없어도 성공해야 함 |
 | `npm run dev` | 개발 서버 | |
-| `npm run test:e2e` | **Playwright UI 흐름** (7개 + 로그인 1개) | `playwright.config.ts`가 자체 dev 서버를 띄운다. `webServer.env`가 DB·분석 키를 비워 유료 호출과 운영 DB 접근을 막는다. 결과가 필요한 스펙은 `e2e/support/workspace.ts`가 분석 API를 실제 모델 출력 픽스처로 가로챈다 |
+| `npm run test:e2e` | **Playwright UI 흐름** (8개, 로그인 포함) | `playwright.config.ts`가 자체 dev 서버를 띄운다. `webServer.env`가 DB·분석 키를 비워 유료 호출과 운영 DB 접근을 막는다. 결과가 필요한 스펙은 `e2e/support/workspace.ts`가 분석 API를 실제 모델 출력 픽스처로 가로챈다 |
 | `npm run test:live` | **실제 모델 E2E 시나리오** (5개) | 유료 호출. `npm run dev`가 떠 있어야 함. `OPENAI_API_KEY`를 BYOK 헤더로 보냄. CI 기본 경로에 넣지 않는다 |
 | `npm run setup` | API 키 입력 → 키 검증 → 모델 자동 선택 → `.env.local` 생성/갱신 | 대화형 입력은 화면에 표시되지 않음. `echo $KEY \| npm run setup`도 가능 |
 
@@ -86,7 +86,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 6. **`protocolVersion: '0.4'`.** 프로토콜 형태를 바꾸는 변경은 버전 상향 + 문서 갱신과 함께만 한다.
    - v0.4는 `ProtocolFinalDocumentSection.composedFrom`(어떤 선택안을 보고 본문을 썼는가)을 추가했다. 마이그레이션은 현재 블록의 `selectedOptionId`에서 유도한다 — 저장 시점에 어긋나 있었는지는 알 수 없으니 일치한다고 보고, 이후의 변경부터 잡는다.
    - **버전을 올리면 마이그레이션을 먼저 검토한다.** `upgradeStoredAnalysisResult`가 저장된 이전 버전 결과를 올린다. 유도할 수 있는 정보는 유도하고(v0.2의 `selectionSource`는 기존 접두사에서), 날조해야 하는 정보만 포기한다(v0.1의 `forbiddenDirectionConflict`는 의미 판정이라 만들 수 없으므로 검증에서 떨어뜨린다). 로드 직후 자동저장이 돌기 때문에, 마이그레이션 없이 버리면 원본이 영구히 사라진다.
-7. **API 키 취급.** 분석 키는 두 곳에서 온다: 서버 환경변수(운영자가 심은 키)와 요청 헤더(`x-planmerge-openai-key`, 사용자가 브라우저에 보관한 자기 키). **서버 키가 항상 우선한다.** 사용자 키는 그 요청을 처리하는 동안 메모리에만 있고 저장·로깅·응답 반환을 하지 않는다. `getAnalysisConfig(request)`만 쓰고 AI 라우트에서 `process.env.OPENAI_API_KEY`를 직접 읽지 않는다.
+7. **API 키 취급.** 분석 키는 두 곳에서 온다: 서버 환경변수(운영자가 심은 키)와 요청 헤더(`x-planmerge-openai-key`, 사용자가 브라우저에 보관한 자기 키). **서버 키가 항상 우선한다.** 사용자 키는 그 요청을 처리하는 동안 메모리에만 있고 저장·로깅·응답 반환을 하지 않는다. `getAnalysisConfig(request)`만 쓰고 AI 라우트에서 `process.env.OPENAI_API_KEY`를 직접 읽지 않는다. Decision Room 라우트가 한때 이 규칙을 어기고 키 해석을 두 갈래로 갖고 있었다 — 모델 설정(`DECISION_MODEL`)은 env에서 읽어도 되지만 키는 아니다.
    - **웹에서 받은 키를 서버 `.env`에 쓰는 엔드포인트는 만들지 않는다.** 배포된 앱에 접근할 수 있는 누구나 운영 자격증명을 덮어쓸 수 있다는 뜻이다. 파일에 쓰는 셋업은 로컬 CLI(`npm run setup`)로만 한다.
    - 키는 워크스페이스 상태(`LocalWorkspaceState`)에 넣지 않는다. 내보내기·공유 스냅샷에 섞이면 안 되므로 별도 localStorage 항목으로 분리해 둔다.
    - 화면에는 `maskApiKey`를 거친 형태만 보여준다.
@@ -130,7 +130,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 ### Auth
 - Auth.js v5(`next-auth`) App Router 관례를 따른다: `src/auth.ts`에서 `NextAuth({...})`로 `{ handlers, auth, signIn, signOut }`를 내보내고, JWT 세션 전략을 사용한다.
 - 게스트 모드가 기본이다. 기존 분석, 편집, 내보내기, 공유 시도 흐름에 로그인 게이트를 추가하지 않는다.
-- `AUTH_TEST_LOGIN=1`은 E2E 전용 Credentials provider를 켜는 스위치이며 프로덕션에서 금지한다.
+- `AUTH_TEST_LOGIN=1`은 E2E 전용 Credentials provider를 켜는 스위치이며 프로덕션에서 금지한다(`src/auth.ts`가 throw). `playwright.config.ts`가 러너 프로세스의 env에서 이 값을 켜고(스펙의 `test.skip`이 보는 곳) 같은 값을 `webServer.env`로 서버에 넘겨서 로그인 스펙이 실제로 돈다 — 빠져 있으면 스펙이 조용히 skip되고 "1 skipped"가 정상처럼 보인다.
 - Auth 스키마(User/Account)는 마이그레이션 파일 없이 Neon SQL Editor 또는 `npx prisma db push`로 적용한다.
 
 ### GMS API
