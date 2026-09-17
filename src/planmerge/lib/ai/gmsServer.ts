@@ -1,4 +1,5 @@
 import {
+  ANALYSIS_MODEL_PREFERENCE,
   OPENAI_RESPONSES_URL,
   readRequestCredentials,
 } from './analysisCredentials';
@@ -85,6 +86,15 @@ export function addModelUsage(total: ModelUsage, next?: ModelUsage): ModelUsage 
 
 const DEFAULT_GMS_API_URL = 'https://gms.ssafy.io/gmsapi/api.openai.com/v1/responses';
 const DEFAULT_GMS_MODEL = 'gpt-4.1';
+/**
+ * 직접 OpenAI 경로의 기본 모델. BYOK 자동 선택과 같은 목록의 첫째(gpt-5.6-luna)다.
+ *
+ * 한때 이 경로도 GMS 기본값(gpt-4.1)을 같이 썼다. 운영 Vercel env에 OPENAI_API_KEY는
+ * 있고 OPENAI_ANALYSIS_MODEL은 없어서, 배포된 앱이 검증한 모델과 다른 모델로 **조용히**
+ * 돌았다 — /api/analysis-config가 model: gpt-4.1을 돌려주는 것을 배포 직후에 봤다.
+ * GMS 기본값은 그대로 둔다. GMS가 luna를 서빙하는지는 확인하지 않았다.
+ */
+const DEFAULT_OPENAI_ANALYSIS_MODEL = ANALYSIS_MODEL_PREFERENCE[0];
 // 업스트림이 응답을 물고 있으면 분석 라우트가 초안 수만큼의 병렬 요청을
 // 함수 타임아웃까지 잡고 있게 되므로 요청 단위로 끊는다. 추론 모델은 기존
 // 60초 안에 끝나지 않는 경우가 있어 한도를 올린다.
@@ -198,7 +208,7 @@ export function getGmsConfig(): GmsConfig {
     apiUrl: direct ? OPENAI_RESPONSES_URL : (process.env.GMS_API_URL ?? DEFAULT_GMS_API_URL),
     model: (direct ? process.env.OPENAI_ANALYSIS_MODEL : process.env.GMS_DEFAULT_MODEL)
       ?? process.env.MODEL_NAME
-      ?? DEFAULT_GMS_MODEL,
+      ?? (direct ? DEFAULT_OPENAI_ANALYSIS_MODEL : DEFAULT_GMS_MODEL),
     keySource: apiKey ? 'server' : 'none',
   };
 }

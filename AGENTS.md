@@ -141,6 +141,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - 일시적 업스트림 오류(408/409/425/429/5xx)는 지수 백오프로 최대 2회 재시도하며 `Retry-After`를 존중한다. 병렬 호출이 동시에 재시도해 다시 429를 맞지 않도록 지터를 넣는다.
 - `normalizeDrafts`는 동시 실행을 `NORMALIZE_CONCURRENCY`(6)로 묶고, 한 건이 실패하면 `AbortSignal`로 남은 호출을 끊는다. 초안 전부를 동시에 던지면 업스트림 rate limit을 자초하고, 끊지 않으면 아무도 읽지 않을 응답에 토큰을 쓴다.
 - AI 라우트는 `export const maxDuration`을 반드시 둔다(분석 300초 / Decision Room 120초 / 클러스터링 60초). 없으면 플랫폼 기본 타임아웃에 걸려 배포 환경에서만 실패한다. Vercel은 플랜 한도를 넘는 값을 거절하므로 플랜을 바꾸면 같이 조정한다.
+- **직접 OpenAI 경로의 기본 모델은 `ANALYSIS_MODEL_PREFERENCE[0]`(gpt-5.6-luna)다.** 한때 GMS 기본값 `gpt-4.1`을 같이 써서, 운영 env에 `OPENAI_API_KEY`만 있고 `OPENAI_ANALYSIS_MODEL`이 없던 배포가 검증한 모델과 다른 모델로 조용히 돌았다(배포 직후 `/api/analysis-config`가 `model: gpt-4.1`). 모델을 바꾸려면 env로 명시한다.
 - 키가 없으면 AI 라우트는 `503`으로 실패한다(규칙 4). 다만 `lint`/`build`/`harness:quality`는 키 없이 통과해야 하므로 CI·테스트가 키를 요구하게 만들지 않는다.
 - 호출 비용이 크므로(초안 수만큼 병렬 호출) rate limit(`analyze` 5회/분)을 완화하지 않는다.
 - **프롬프트에 같은 데이터를 두 번 넣지 않는다.** merge 프롬프트는 `normalizedIdeas`를 딱 한 번 직렬화한다. 한때 두 번 들어가 있어 호출마다 3천 토큰(전체 입력의 22%)을 낭비했다. 프롬프트를 고칠 때 `JSON.stringify(normalizedIdeas)`가 몇 번 나오는지 센다.
@@ -157,7 +158,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 |---|---|---|
 | `OPENAI_API_KEY` | OpenAI 직접 분석/클러스터링/Decision Room | 사용자가 화면에서 등록한 키를 쓰고, 그것도 없으면 `503` |
 | `ANALYSIS_PROVIDER` | `openai`면 OpenAI 직접 호출 | `OPENAI_API_KEY`가 있으면 자동으로 openai |
-| `OPENAI_ANALYSIS_MODEL` | 정규화·병합·클러스터링 모델 | `gpt-4.1` |
+| `OPENAI_ANALYSIS_MODEL` | 정규화·병합·클러스터링 모델 | `gpt-5.6-luna` (직접 OpenAI). GMS 경로는 `gpt-4.1` |
 | `OPENAI_DECISION_MODEL` / `DECISION_MODEL` | Decision Room 모델 | `gpt-5.6-luna` |
 | `GMS_API_KEY` | AI 분석/클러스터링 (GMS 경유) | 분석 API가 `503`으로 실패 |
 | `GMS_API_URL` | GMS 엔드포인트 | 기본값 사용 |

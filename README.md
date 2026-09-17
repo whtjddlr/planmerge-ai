@@ -149,7 +149,7 @@ When `OPENAI_API_KEY` is used, the Decision Room calls the official OpenAI `/v1/
 
 | Path | Environment variable | Default | Purpose |
 |---|---|---|---|
-| Draft normalization and merge (OpenAI direct) | `OPENAI_ANALYSIS_MODEL` | `gpt-4.1` | Document-analysis pipeline |
+| Draft normalization and merge (OpenAI direct) | `OPENAI_ANALYSIS_MODEL` | `gpt-5.6-luna` | Document-analysis pipeline |
 | Draft normalization and merge (via GMS) | `GMS_DEFAULT_MODEL` | `gpt-4.1` | Document-analysis pipeline |
 | Decision Room | `DECISION_MODEL` | `gpt-5.6-luna` | Provider-neutral conflict-resolution model |
 | Compatibility aliases | `OPENAI_DECISION_MODEL`, `GMS_DECISION_MODEL` | none | Read only when `DECISION_MODEL` is unset |
@@ -261,7 +261,7 @@ Open `http://localhost:3000`.
 | `GMS_API_URL` | OpenAI-compatible Responses endpoint | GMS endpoint in `.env.example` |
 | `OPENAI_API_KEY` | Direct OpenAI Responses credential for analysis, clustering, and Decision Room | The routes can use GMS when configured; otherwise they return `503` |
 | `ANALYSIS_PROVIDER` | `openai` forces direct OpenAI calls | Inferred as `openai` when `OPENAI_API_KEY` is set |
-| `OPENAI_ANALYSIS_MODEL` | Normalization, merge, and clustering model | `gpt-4.1` |
+| `OPENAI_ANALYSIS_MODEL` | Normalization, merge, and clustering model | `gpt-5.6-luna` |
 | `GMS_DEFAULT_MODEL` | Existing normalization/merge model | `gpt-4.1` |
 | `DECISION_MODEL` | Decision Room model | `gpt-5.6-luna` |
 | `OPENAI_DECISION_MODEL`, `GMS_DECISION_MODEL` | Compatibility aliases | Read only when `DECISION_MODEL` is unset |
