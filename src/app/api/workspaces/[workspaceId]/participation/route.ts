@@ -9,6 +9,7 @@ import {
   SHARED_WORKSPACE_UNAVAILABLE_ERROR,
 } from '@/server/sharedWorkspace';
 import { checkRateLimit, getClientKey } from '@/server/rateLimit';
+import { resolveParticipantKey } from '@/server/participantKey';
 
 const RATE_LIMIT = { limit: 60, windowMs: 60_000 };
 
@@ -48,7 +49,12 @@ export async function GET(request: Request, context: RouteContext) {
 
   const url = new URL(request.url);
   const decisionBlockId = readRequiredString(url.searchParams.get('decisionBlockId'), 160);
-  const anonymousKey = readRequiredString(url.searchParams.get('anonymousKey'), 80);
+  const clientAnonymousKey = readRequiredString(url.searchParams.get('anonymousKey'), 80);
+  // 로그인 사용자는 계정에서 파생한 키로 승격한다 — HMAC(ANON_KEY_SECRET, userId + workspaceId).
+  // localStorage를 지워도 계정당 1키다. 게스트는 보낸 키를 그대로 쓴다(설계상 트레이드오프).
+  const anonymousKey = clientAnonymousKey
+    ? resolveParticipantKey({ userId: session?.user?.id, workspaceId, clientKey: clientAnonymousKey })
+    : undefined;
   const requestedVersion = readRequestedVersion(url.searchParams.get('version'));
 
   if (!decisionBlockId) {

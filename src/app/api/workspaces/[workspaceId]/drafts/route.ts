@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { getDb, isDatabaseConfigured } from '@/server/db';
 import { checkRateLimit, getClientKey } from '@/server/rateLimit';
+import { resolveParticipantKey } from '@/server/participantKey';
 import {
   findSharedWorkspaceAccessStatus,
   isValidWorkspaceId,
@@ -212,7 +213,13 @@ export async function POST(request: Request, context: RouteContext) {
         aiModel: parsedBody.draft.aiModel,
         taskTitle: parsedBody.draft.taskTitle,
         rawText: parsedBody.draft.rawText,
-        anonymousKey: parsedBody.draft.anonymousKey,
+        // 로그인 사용자는 계정에서 파생한 키로 저장한다. 그래야 나중에 이 초안을 철회할
+        // 권한이 localStorage가 아니라 계정에 묶인다.
+        anonymousKey: resolveParticipantKey({
+          userId: session?.user?.id,
+          workspaceId,
+          clientKey: parsedBody.draft.anonymousKey,
+        }) ?? parsedBody.draft.anonymousKey,
       },
       select: { id: true, createdAt: true },
     });

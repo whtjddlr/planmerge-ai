@@ -24,7 +24,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 |---|---|---|
 | `npm ci` | 의존성 설치 | `postinstall`에서 `prisma generate` 자동 실행 |
 | `npm run lint` | ESLint | |
-| `npm run harness:quality` | **품질 회귀 게이트** (품질 12 + 결정 42 케이스) | 오프라인. 모델 호출 없음. 실패 시 exit 1 |
+| `npm run harness:quality` | **품질 회귀 게이트** (품질 12 + 결정 43 케이스) | 오프라인. 모델 호출 없음. 실패 시 exit 1 |
 | `npm run harness:local` | 로컬 하네스 단건 실행 + 프롬프트 미리보기 | 오프라인 |
 | `npm run build` | `next build` | `OPENAI_API_KEY`/`GMS_API_KEY`/`DATABASE_URL` 없어도 성공해야 함 |
 | `npm run dev` | 개발 서버 | |
@@ -130,6 +130,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 ### Auth
 - Auth.js v5(`next-auth`) App Router 관례를 따른다: `src/auth.ts`에서 `NextAuth({...})`로 `{ handlers, auth, signIn, signOut }`를 내보내고, JWT 세션 전략을 사용한다.
 - 게스트 모드가 기본이다. 기존 분석, 편집, 내보내기, 공유 시도 흐름에 로그인 게이트를 추가하지 않는다.
+- **참여자 키는 `resolveParticipantKey` 하나로 정한다.** 투표·의견·참여 조회·초안 제출·철회가 모두 이 함수를 거친다. 로그인 사용자는 `HMAC-SHA256(ANON_KEY_SECRET, userId + workspaceId)`로 승격되어 localStorage를 지워도 계정당 1키이고, 게스트는 클라이언트가 만든 키를 그대로 쓴다 — 링크 공유의 개방성을 위한 **의도된 트레이드오프**라 게스트 투표 조작은 레이트리밋만 막는다(설계 문서 "익명 키 재설계"). 한 라우트만 다른 규칙으로 키를 정하면 같은 사람이 제출한 초안을 철회하지 못하는 식으로 어긋난다.
 - `AUTH_TEST_LOGIN=1`은 E2E 전용 Credentials provider를 켜는 스위치이며 프로덕션에서 금지한다(`src/auth.ts`가 throw). `playwright.config.ts`가 러너 프로세스의 env에서 이 값을 켜고(스펙의 `test.skip`이 보는 곳) 같은 값을 `webServer.env`로 서버에 넘겨서 로그인 스펙이 실제로 돈다 — 빠져 있으면 스펙이 조용히 skip되고 "1 skipped"가 정상처럼 보인다.
 - Auth 스키마(User/Account)는 마이그레이션 파일 없이 Neon SQL Editor 또는 `npx prisma db push`로 적용한다.
 
@@ -162,5 +163,6 @@ This version has breaking changes — APIs, conventions, and file structure may 
 | `GMS_DEFAULT_MODEL` / `MODEL_NAME` | 모델명 | `gpt-4.1` |
 | `DATABASE_URL` | Neon pooled (런타임) | 공유 기능 503, localStorage 모드 |
 | `DIRECT_URL` | Neon direct (마이그레이션) | `DATABASE_URL`로 폴백 |
+| `ANON_KEY_SECRET` | 로그인 참여자의 키 파생(`HMAC-SHA256(secret, userId + workspaceId)`) | 로그인 사용자도 클라이언트 키로 참여, 서버 로그에 경고 1회 |
 | `UPSTASH_REDIS_REST_URL` | 분산 rate limit용 Upstash Redis REST URL | 인메모리 rate limit fallback |
 | `UPSTASH_REDIS_REST_TOKEN` | 분산 rate limit용 Upstash Redis REST 토큰 | 인메모리 rate limit fallback |

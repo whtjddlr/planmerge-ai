@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
+import { auth } from '@/auth';
 import { getDb, isDatabaseConfigured } from '@/server/db';
+import { resolveParticipantKey } from '@/server/participantKey';
 import {
   getSharedWorkspaceAccessStatus,
   isManageTokenMatch,
@@ -70,6 +72,7 @@ export async function PATCH(request: Request, context: RouteContext) {
   }
 
   const { workspaceId, draftId } = await context.params;
+  const session = await auth();
 
   if (!isValidWorkspaceId(workspaceId)) {
     return NextResponse.json({ errors: ['잘못된 워크스페이스 ID입니다.'] }, { status: 400 });
@@ -128,7 +131,12 @@ export async function PATCH(request: Request, context: RouteContext) {
       !manageToken &&
       parsedBody.status === 'dismissed' &&
       draft.status === 'pending' &&
-      parsedBody.anonymousKey === draft.anonymousKey;
+      // 제출 시점과 같은 규칙으로 키를 정해야 비교가 맞는다. 로그인 사용자는 파생 키다.
+      resolveParticipantKey({
+        userId: session?.user?.id,
+        workspaceId,
+        clientKey: parsedBody.anonymousKey,
+      }) === draft.anonymousKey;
 
     if (!hasManageToken && !submitterCanDismiss) {
       return NextResponse.json(

@@ -268,7 +268,7 @@ Open `http://localhost:3000`.
 | `DATABASE_URL` | Neon pooled runtime connection | Sharing unavailable |
 | `DIRECT_URL` | Neon direct Prisma connection | Falls back to `DATABASE_URL` for Prisma commands |
 | `AUTH_SECRET`, `AUTH_GITHUB_ID`, `AUTH_GITHUB_SECRET` | Optional GitHub authentication | Guest mode |
-| `ANON_KEY_SECRET` | HMAC secret for anonymous participation keys | Development behavior only; configure in production |
+| `ANON_KEY_SECRET` | Signed-in participants get a server-derived key, `HMAC-SHA256(secret, userId + workspaceId)`, so one account is one vote per workspace and workspaces cannot be linked. Guests keep their client key by design. | Signed-in users fall back to the client key and the server logs a warning; set it in production |
 | `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | Distributed rate limiting | In-memory rate limiter |
 
 Never expose `GMS_API_KEY`, `OPENAI_API_KEY`, database URLs, or authentication secrets to the browser or commit them to the repository.

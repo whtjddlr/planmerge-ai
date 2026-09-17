@@ -78,7 +78,9 @@ model SharedWorkspace {
 
 ## 익명 키 재설계 (투표 무결성의 핵심)
 
-현재: `anonymousKey`는 클라이언트 localStorage 값 → 시크릿 창을 열 때마다 새 표. 공유 링크가 외부 공개면 사실상 무제한 투표.
+**구현됨(2026-09-17)**: 로그인 사용자는 `src/server/participantKey.ts`가 `HMAC-SHA256(ANON_KEY_SECRET, userId + workspaceId)`로 파생한 키로 자동 승격되고(투표·의견·참여 조회·초안 제출·철회 모두), 게스트는 아래 표대로 클라이언트 키를 유지한다. `visibility=org`는 아직이다.
+
+구현 전 상태: `anonymousKey`는 클라이언트 localStorage 값 → 시크릿 창을 열 때마다 새 표. 공유 링크가 외부 공개면 사실상 무제한 투표.
 
 | 모드 | 키 생성 | 무결성 | 익명성 |
 |---|---|---|---|

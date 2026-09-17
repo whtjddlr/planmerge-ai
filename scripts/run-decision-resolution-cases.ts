@@ -36,6 +36,7 @@ import {
   validateIdeaPlacementResult,
 } from '../src/planmerge/lib/ai/ideaPlacement';
 import { sampleDrafts, sampleProjectSettings } from '../src/planmerge/lib/localWorkspace';
+import { deriveParticipantKey, resolveParticipantKey } from '../src/server/participantKey';
 
 /** 문서 작성 검증을 돌린다. 모든 결정을 덮는 최소한의 올바른 출력을 기본으로 만든다. */
 function composeSections(
@@ -1391,6 +1392,52 @@ const cases: Array<{ id: string; run: () => string }> = [
       );
 
       return 'a section without a composition record is not alarmed on';
+    },
+  },
+  {
+    id: 'logged-in-participants-get-a-derived-key',
+    run: () => {
+      // 설계 문서의 검증 계획 그대로: 같은 userId+workspaceId → 항상 같은 키,
+      // 다른 워크스페이스 → 다른 키. 게스트는 클라이언트 키를 그대로 쓴다.
+      const secret = 'harness-secret';
+      const a = deriveParticipantKey('user-1', 'ws-1', secret);
+
+      assert.equal(a, deriveParticipantKey('user-1', 'ws-1', secret), 'same inputs must give the same key');
+      assert.match(a, /^[0-9a-f]{64}$/, 'the key is an HMAC-SHA256 hex digest, never the user id');
+      assert.notEqual(a, deriveParticipantKey('user-1', 'ws-2', secret), 'workspaces must not be linkable');
+      assert.notEqual(a, deriveParticipantKey('user-2', 'ws-1', secret), 'users must not collide');
+      assert.notEqual(a, deriveParticipantKey('user-1', 'ws-1', 'other-secret'), 'the secret must matter');
+
+      const previous = process.env.ANON_KEY_SECRET;
+      process.env.ANON_KEY_SECRET = secret;
+
+      try {
+        assert.equal(
+          resolveParticipantKey({ userId: 'user-1', workspaceId: 'ws-1', clientKey: 'client-key' }),
+          a,
+          'a signed-in user is promoted to the derived key regardless of what the client sent',
+        );
+        assert.equal(
+          resolveParticipantKey({ userId: undefined, workspaceId: 'ws-1', clientKey: 'client-key' }),
+          'client-key',
+          'a guest keeps the client key — the documented trade-off for open links',
+        );
+
+        process.env.ANON_KEY_SECRET = '';
+        assert.equal(
+          resolveParticipantKey({ userId: 'user-1', workspaceId: 'ws-1', clientKey: 'client-key' }),
+          'client-key',
+          'without the secret the server falls back to the client key instead of failing sharing',
+        );
+      } finally {
+        if (previous === undefined) {
+          delete process.env.ANON_KEY_SECRET;
+        } else {
+          process.env.ANON_KEY_SECRET = previous;
+        }
+      }
+
+      return 'signed-in participants get one HMAC key per account per workspace; guests keep the client key';
     },
   },
 ];
