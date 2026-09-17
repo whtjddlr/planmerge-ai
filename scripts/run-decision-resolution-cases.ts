@@ -14,7 +14,11 @@ import {
 import {
   conflictsWithForbiddenDirection,
   ensureAssumptionBackedBlocksAreReviewed,
+  ensureDecisionBlockShape,
+  ensureOptionsCiteKnownIdeas,
   ensureServerOwnedSelectionSource,
+  exceedsServerAuthoredLimit,
+  SERVER_AUTHORED_IDEA_LIMIT,
   upgradeStoredAnalysisResult,
   runLocalPlanMergeHarness,
   validatePlanMergeAnalysis,
@@ -602,6 +606,230 @@ const cases: Array<{ id: string; run: () => string }> = [
       assert.equal(validation.valid, true, validation.errors.join('; '));
 
       return 'a stored v0.2 result is upgraded and kept instead of silently discarded';
+    },
+  },
+  {
+    id: 'malformed-source-ids-are-repaired-without-a-second-model-call',
+    run: () => {
+      // 실제 관측된 실패: 모델이 draft-jihun_idea_1 대신 draft-jihun_idea_idea_1을 냈다.
+      // 판단이 아니라 형식 오류이므로 repair 프롬프트(merge급 호출)를 낭비할 이유가 없다.
+      const ideas = analysisResult.normalizedIdeas;
+      const block = analysisResult.decisionBlocks[0];
+      const selected = block.options.find((option) => option.id === block.selectedOptionId)!;
+      const realId = selected.sourceIdeaIds[0];
+
+      assert(realId, 'fixture block must cite an idea');
+
+      // 구간을 하나 복제한다. 하네스 ID(idea_1)와 라우트 ID(draft-x_idea_1) 양쪽에서 통한다.
+      const tokens = realId.split('_');
+      const mangled = [tokens[0], tokens[0], ...tokens.slice(1)].join('_');
+      assert.notEqual(mangled, realId);
+
+      const broken = {
+        ...analysisResult,
+        decisionBlocks: analysisResult.decisionBlocks.map((entry) => (
+          entry.id === block.id
+            ? {
+              ...entry,
+              options: entry.options.map((option) => (
+                option.id === selected.id
+                  ? { ...option, sourceIdeaIds: [mangled, 'completely-made-up-id'] }
+                  : option
+              )),
+            }
+            : entry
+        )),
+      };
+
+      assert.equal(validatePlanMergeAnalysis(analysisPayload, broken).valid, false);
+
+      const repaired = ensureOptionsCiteKnownIdeas(broken, ideas);
+      const repairedOption = repaired.decisionBlocks
+        .find((entry) => entry.id === block.id)!
+        .options.find((option) => option.id === selected.id)!;
+
+      // 형식 오류는 살리고, 날조된 ID는 버린다 — 엉뚱한 작성자에게 귀속시키지 않는다.
+      assert.deepEqual(
+        repairedOption.sourceIdeaIds,
+        [realId],
+        'a duplicated _idea_ segment is collapsed; an invented id is dropped',
+      );
+      assert.equal(validatePlanMergeAnalysis(analysisPayload, repaired).valid, true);
+      assert(
+        repaired.warnings.some((warning) => warning.includes('형식 오류')),
+        'the correction must say what it repaired',
+      );
+
+      assert.strictEqual(
+        ensureOptionsCiteKnownIdeas(analysisResult, ideas),
+        analysisResult,
+        'a clean result must not be rebuilt',
+      );
+
+      return 'a malformed source id is fixed by the server instead of paying for a repair call';
+    },
+  },
+  {
+    id: 'block-shape-errors-are-repaired-without-changing-the-choice',
+    run: () => {
+      // 루나 merge 5회 실측에서 나온 실패 두 종류. 둘 다 라벨·구조라 서버가 고친다.
+      const multi = analysisResult.decisionBlocks.find((block) => block.options.length > 1);
+      assert(multi, 'fixture must contain a block with more than one option');
+
+      // (1) 옵션이 둘 다 selected로 표기된 경우
+      const twoSelected = {
+        ...analysisResult,
+        decisionBlocks: analysisResult.decisionBlocks.map((block) => (
+          block.id === multi.id
+            ? { ...block, options: block.options.map((option) => ({ ...option, optionType: 'selected' as const })) }
+            : block
+        )),
+      };
+
+      assert.equal(validatePlanMergeAnalysis(analysisPayload, twoSelected).valid, false);
+
+      const retyped = ensureDecisionBlockShape(twoSelected);
+      const retypedBlock = retyped.decisionBlocks.find((block) => block.id === multi.id)!;
+
+      assert.equal(validatePlanMergeAnalysis(analysisPayload, retyped).valid, true);
+      assert.equal(
+        retypedBlock.options.filter((option) => option.optionType === 'selected').length,
+        1,
+        'exactly one option must end up selected',
+      );
+      assert.equal(
+        retypedBlock.selectedOptionId,
+        multi.selectedOptionId,
+        'the repair must not change which option was adopted — only its label',
+      );
+
+      // (2) sectionKey가 섹션 정의에 없는 경우 — 되돌릴 방법이 없으므로 블록을 버린다
+      const badKey = {
+        ...analysisResult,
+        decisionBlocks: analysisResult.decisionBlocks.map((block) => (
+          block.id === multi.id ? { ...block, sectionKey: 'not_a_section' as never } : block
+        )),
+      };
+
+      assert.equal(validatePlanMergeAnalysis(analysisPayload, badKey).valid, false);
+
+      const dropped = ensureDecisionBlockShape(badKey);
+      assert(
+        !dropped.decisionBlocks.some((block) => block.id === multi.id),
+        'a block with an unknown sectionKey must be dropped so coverage can rebuild it',
+      );
+
+      // (3) 멀쩡한 결과는 다시 만들지 않는다
+      assert.strictEqual(ensureDecisionBlockShape(analysisResult), analysisResult);
+
+      return 'selected-option labels are corrected and unknown section keys are dropped, with the choice intact';
+    },
+  },
+  {
+    id: 'a-conflict-promoted-to-selected-stays-visible',
+    run: () => {
+      // 모델이 자기모순을 낼 수 있다: selectedOptionId가 충돌 옵션을 가리킨다.
+      // 이때 블록을 버려 재건하면 서버가 금지 아닌 아이디어를 골라서 모순 자체가
+      // 사라진다. 그래서 모델의 선택을 유지하고 경고를 남기며, 위반 판단은
+      // optionType이 아니라 아이디어 판정이 하므로 게이트가 그대로 막는다.
+      const block = analysisResult.decisionBlocks.find((entry) => (
+        entry.options.some((option) => (
+          option.optionType === 'conflict'
+          && option.sourceIdeaIds.some((ideaId) => {
+            const idea = ideasById.get(ideaId);
+            return Boolean(idea) && conflictsWithForbiddenDirection(idea!);
+          })
+        ))
+      ));
+
+      assert(block, 'fixture must contain a forbidden-direction conflict option');
+
+      const conflictOption = block.options.find((option) => option.optionType === 'conflict')!;
+      const contradictory = {
+        ...analysisResult,
+        decisionBlocks: analysisResult.decisionBlocks.map((entry) => (
+          entry.id === block.id ? { ...entry, selectedOptionId: conflictOption.id } : entry
+        )),
+      };
+
+      const fixed = ensureDecisionBlockShape(contradictory);
+      const target = fixed.decisionBlocks.find((entry) => entry.id === block.id);
+
+      assert(target, 'the block must be kept so the contradiction stays on the record');
+      assert.equal(
+        validatePlanMergeAnalysis(analysisPayload, fixed).valid,
+        true,
+        'the repair must produce a structurally valid result',
+      );
+      assert(
+        fixed.warnings.some((warning) => warning.includes('충돌 의견을 선택안으로 지정')),
+        'the promotion must be recorded, not silent',
+      );
+
+      // 핵심: 위반이 숨지 않는다.
+      const report = evaluateAnalysisQuality(analysisPayload, fixed);
+      assert.notEqual(report.level, 'ready');
+      assert(
+        report.findings.some((finding) => finding.id === 'forbidden_direction_selected'),
+        'the quality gate must still report the forbidden selection',
+      );
+
+      return 'a self-contradictory merge keeps the contradiction visible instead of hiding it behind a rebuild';
+    },
+  },
+  {
+    id: 'server-authored-rebuild-over-half-is-not-a-result',
+    run: () => {
+      const ideaCount = 25;
+
+      // 몇 개 줍는 것은 보강이다. 절반을 넘기면 문서를 서버가 쓴 것이다.
+      assert.equal(exceedsServerAuthoredLimit(1, ideaCount), false);
+      assert.equal(exceedsServerAuthoredLimit(12, ideaCount), false);
+      assert.equal(exceedsServerAuthoredLimit(13, ideaCount), true);
+      assert.equal(exceedsServerAuthoredLimit(ideaCount, ideaCount), true);
+
+      // 아이디어가 없으면 나눌 것도 없다. 0으로 나눠 NaN을 만들지 않는다.
+      assert.equal(exceedsServerAuthoredLimit(0, 0), false);
+
+      assert.equal(
+        SERVER_AUTHORED_IDEA_LIMIT,
+        0.5,
+        'the limit is a policy number — changing it changes what counts as a result',
+      );
+
+      return 'the server may top up a few ideas but may not author most of the document';
+    },
+  },
+  {
+    id: 'stripped-source-links-are-rejected-not-rebuilt',
+    run: () => {
+      // 실측된 실패다: 루나가 "모든 sourceIdeaIds 연결을 제거했다"는 경고와 함께
+      // 인용이 전부 빠진 응답을 냈다. 예전 체인은 이걸 아이디어 1개 = 블록 1개로
+      // 재건해서 충돌 0인 문서를 200으로 돌려줬다.
+      const stripped = {
+        ...analysisResult,
+        decisionBlocks: analysisResult.decisionBlocks.map((block) => ({
+          ...block,
+          options: block.options.map((option) => ({ ...option, sourceIdeaIds: [] })),
+        })),
+      };
+
+      const cited = ensureOptionsCiteKnownIdeas(stripped, analysisResult.normalizedIdeas);
+      const citedIdeaIds = new Set(
+        cited.decisionBlocks.flatMap((block) => block.options.flatMap((option) => option.sourceIdeaIds)),
+      );
+
+      assert.equal(citedIdeaIds.size, 0, 'nothing is cited once the model strips every link');
+
+      const uncovered = analysisResult.normalizedIdeas.length - citedIdeaIds.size;
+
+      assert.equal(
+        exceedsServerAuthoredLimit(uncovered, analysisResult.normalizedIdeas.length),
+        true,
+        'a fully unlinked merge must be handed back to the model, not rebuilt by the server',
+      );
+
+      return 'a merge that strips every source link is a failure, not an input to a server rebuild';
     },
   },
 ];

@@ -9,6 +9,9 @@ import {
   documentSectionDefinitions,
   parsePlanMergeAnalysisPayload,
   ensureAssumptionBackedBlocksAreReviewed,
+  ensureDecisionBlockShape,
+  exceedsServerAuthoredLimit,
+  ensureOptionsCiteKnownIdeas,
   ensureServerOwnedSelectionSource,
   validateDraftNormalizeResult,
   validatePlanMergeAnalysis,
@@ -66,6 +69,7 @@ const NORMALIZE_CONCURRENCY = readNormalizeConcurrency();
 // merge 출력은 초안 수에 따라 커진다. 예산이 모자라면 응답이 incomplete로 잘려
 // 전체 요청이 실패하므로, 아이디어 에코를 없앤 뒤에도 여유를 둔다.
 const MERGE_MAX_OUTPUT_TOKENS = 32_000;
+
 
 const normalizedIdeaTypes = new Set<NormalizedIdeaType>([
   'problem',
@@ -314,55 +318,128 @@ function ensureCanonicalMissingSections(result: PlanMergeAnalysisResult): PlanMe
 
 // postProcess의 ensure* 보정은 배열 순회를 전제한다. 골격이 깨진 응답을 그대로 넣으면
 // 검증·repair 재시도 전에 TypeError로 폴백해 버리므로, 보정 가능한 형태인지 먼저 가른다.
-function hasMergeResultShape(result: unknown): result is PlanMergeAnalysisResult {
+/**
+ * 보정 체인이 쓸 수 있는 형태로 정리하고, 정리할 수 없으면 undefined를 준다.
+ *
+ * 고칠 수 있는 것과 없는 것을 구분한다.
+ *
+ * - `decisionBlocks`가 없거나 `options`가 배열이 아니면 되돌릴 근거가 없다 → 포기.
+ * - `finalDocumentSections`/`missingSections`/`warnings`는 체인이 결정 블록에서
+ *   다시 세울 수 있다(`ensureFinalDocumentCoverage`, `ensureCanonicalMissingSections`)
+ *   → 잘못된 항목만 버리고 계속한다.
+ *
+ * 예전에는 섹션 하나가 객체가 아니면 postProcess가 통째로 빠졌다. 그러면 canonical
+ * 아이디어조차 붙지 않아서, "섹션 형태가 틀렸다" 한 줄짜리 문제가 출처 오류 수십 개로
+ * 보고되고 repair가 엉뚱한 곳을 고치러 갔다. 실제로 한 번 그렇게 502가 났다.
+ */
+function coerceMergeResultShape(result: unknown): PlanMergeAnalysisResult | undefined {
   if (typeof result !== 'object' || result === null || Array.isArray(result)) {
-    return false;
+    return undefined;
   }
 
   const record = result as Record<string, unknown>;
 
-  return (
-    // normalizedIdeas는 모델이 돌려주지 않는다. 서버가 검증된 아이디어를 붙인다.
-    Array.isArray(record.finalDocumentSections) &&
-    Array.isArray(record.missingSections) &&
-    Array.isArray(record.warnings) &&
-    Array.isArray(record.decisionBlocks) &&
-    record.decisionBlocks.every((block) =>
-      typeof block === 'object' &&
-      block !== null &&
-      Array.isArray((block as Record<string, unknown>).options),
-    ) &&
-    record.finalDocumentSections.every((section) => typeof section === 'object' && section !== null)
-  );
+  const repairableBlocks = Array.isArray(record.decisionBlocks)
+    && record.decisionBlocks.every((block) => (
+      typeof block === 'object'
+      && block !== null
+      && Array.isArray((block as Record<string, unknown>).options)
+    ));
+
+  if (!repairableBlocks) {
+    return undefined;
+  }
+
+  const sections = Array.isArray(record.finalDocumentSections)
+    ? record.finalDocumentSections.filter((section) => typeof section === 'object' && section !== null)
+    : [];
+  const droppedSections = Array.isArray(record.finalDocumentSections)
+    ? record.finalDocumentSections.length - sections.length
+    : 0;
+  const warnings = (Array.isArray(record.warnings) ? record.warnings : [])
+    .filter((warning): warning is string => typeof warning === 'string');
+
+  return {
+    ...(record as unknown as PlanMergeAnalysisResult),
+    finalDocumentSections: sections as PlanMergeAnalysisResult['finalDocumentSections'],
+    missingSections: (Array.isArray(record.missingSections)
+      ? record.missingSections
+      : []) as PlanMergeAnalysisResult['missingSections'],
+    warnings: droppedSections
+      ? [...warnings, `형태가 맞지 않는 최종 문서 섹션 ${droppedSections}개를 버리고 결정 블록에서 다시 세웠습니다.`]
+      : warnings,
+  };
 }
+
+/**
+ * merge 결과를 그대로 내보낼 수 없게 만드는 사유를 모은다.
+ *
+ * 스키마 위반만 보면 안 된다. 서버가 문서를 대신 써 버린 결과는 **스키마상 완벽하다** —
+ * 출처도 붙어 있고 선택안도 하나씩 있다. 그래서 검증기는 통과시키고, 충돌 0인 문서가
+ * 정상 응답으로 나간다. 재건 규모를 같은 자리에서 같이 봐야 한다.
+ */
+function collectMergeBlockers(
+  payload: PlanMergeAnalysisPayload,
+  merge: PostProcessedMerge,
+  normalizedIdeas: NormalizedIdea[],
+): string[] {
+  const errors = validatePlanMergeAnalysis(payload, merge.result).errors;
+
+  if (!merge.exceedsServerAuthoredLimit) {
+    return errors;
+  }
+
+  return [
+    `merge 응답이 ${normalizedIdeas.length}개 아이디어 중 ${merge.serverAuthoredIdeaCount}개를 어떤 옵션의 sourceIdeaIds에도 인용하지 않았습니다. `
+    + '모든 아이디어를 인용하고, 같은 주제를 말하는 아이디어들은 하나의 Decision Block 안에 서로 다른 옵션으로 묶으십시오. '
+    + '서버는 누락된 아이디어를 대신 배치하지 않습니다.',
+    ...errors,
+  ];
+}
+
+type PostProcessedMerge = {
+  result: PlanMergeAnalysisResult;
+  /** 모델이 인용하지 않아 서버가 Decision Block을 대신 쓴 아이디어 수. */
+  serverAuthoredIdeaCount: number;
+  /** 서버가 쓴 분량이 `SERVER_AUTHORED_IDEA_LIMIT`를 넘었는가. */
+  exceedsServerAuthoredLimit: boolean;
+};
 
 function postProcessMergeResult(
   payload: PlanMergeAnalysisPayload,
   result: PlanMergeAnalysisResult,
   normalizedIdeas: NormalizedIdea[],
-) {
-  if (!hasMergeResultShape(result)) {
-    return result;
+): PostProcessedMerge {
+  const coerced = coerceMergeResultShape(result);
+
+  if (!coerced) {
+    return { result, serverAuthoredIdeaCount: 0, exceedsServerAuthoredLimit: false };
   }
 
-  return ensureCanonicalMissingSections(
-    ensureAssumptionBackedBlocksAreReviewed(
-      ensureFinalDocumentCoverage(
-        ensureDecisionBlockCoverage(
-          payload,
-          ensureServerOwnedSelectionSource(
-          ensureMergeUsesCanonicalIdeas(result, normalizedIdeas),
-        ),
-        ),
-      ),
+  const canonical = ensureMergeUsesCanonicalIdeas(coerced, normalizedIdeas);
+  const cited = ensureOptionsCiteKnownIdeas(canonical, normalizedIdeas);
+  const shaped = ensureDecisionBlockShape(cited);
+  const owned = ensureServerOwnedSelectionSource(shaped);
+  const covered = ensureDecisionBlockCoverage(payload, owned);
+  const complete = ensureFinalDocumentCoverage(covered.result);
+  const reviewed = ensureAssumptionBackedBlocksAreReviewed(complete);
+
+  return {
+    result: ensureCanonicalMissingSections(reviewed),
+    serverAuthoredIdeaCount: covered.serverAuthoredIdeaCount,
+    exceedsServerAuthoredLimit: exceedsServerAuthoredLimit(
+      covered.serverAuthoredIdeaCount,
+      normalizedIdeas.length,
     ),
-  );
+  };
 }
+
+type CoverageResult = { result: PlanMergeAnalysisResult; serverAuthoredIdeaCount: number };
 
 function ensureDecisionBlockCoverage(
   payload: PlanMergeAnalysisPayload,
   result: PlanMergeAnalysisResult,
-): PlanMergeAnalysisResult {
+): CoverageResult {
   const citedIdeaIds = new Set(
     result.decisionBlocks.flatMap((block) =>
       block.options.flatMap((option) => option.sourceIdeaIds),
@@ -371,7 +448,7 @@ function ensureDecisionBlockCoverage(
   const uncoveredIdeas = result.normalizedIdeas.filter((idea) => !citedIdeaIds.has(idea.id));
 
   if (!uncoveredIdeas.length) {
-    return result;
+    return { result, serverAuthoredIdeaCount: 0 };
   }
 
   const existingBlockIds = new Set(result.decisionBlocks.map((block) => block.id));
@@ -439,9 +516,12 @@ function ensureDecisionBlockCoverage(
   }
 
   return {
-    ...result,
-    decisionBlocks: [...nextDecisionBlocks, ...addedBlocks],
-    warnings,
+    result: {
+      ...result,
+      decisionBlocks: [...nextDecisionBlocks, ...addedBlocks],
+      warnings,
+    },
+    serverAuthoredIdeaCount: uncoveredIdeas.length,
   };
 }
 
@@ -634,13 +714,13 @@ export async function POST(request: Request) {
       mergePrompt,
       { maxOutputTokens: MERGE_MAX_OUTPUT_TOKENS, config, onUsage: collectUsage },
     );
-    const mergeResult = postProcessMergeResult(payload, mergeResultRaw, normalizedIdeas);
-    const validation = validatePlanMergeAnalysis(payload, mergeResult);
+    const merge = postProcessMergeResult(payload, mergeResultRaw, normalizedIdeas);
+    const mergeErrors = collectMergeBlockers(payload, merge, normalizedIdeas);
 
-    if (validation.valid) {
+    if (!mergeErrors.length) {
       return NextResponse.json(
         {
-          ...mergeResult,
+          ...merge.result,
           source: config.provider,
         } satisfies PlanMergeAnalysisResult,
         { headers: usageHeaders(usage) },
@@ -648,22 +728,22 @@ export async function POST(request: Request) {
     }
 
     const repairedResultRaw = await callGmsJson<PlanMergeAnalysisResult>(
-      buildPlanMergeRepairPrompt(payload, mergeResult, validation.errors, normalizedIdeas),
+      buildPlanMergeRepairPrompt(payload, merge.result, mergeErrors, normalizedIdeas),
       { maxOutputTokens: MERGE_MAX_OUTPUT_TOKENS, config, onUsage: collectUsage },
     );
-    const repairedResult = postProcessMergeResult(payload, repairedResultRaw, normalizedIdeas);
-    const repairValidation = validatePlanMergeAnalysis(payload, repairedResult);
+    const repaired = postProcessMergeResult(payload, repairedResultRaw, normalizedIdeas);
+    const repairErrors = collectMergeBlockers(payload, repaired, normalizedIdeas);
 
-    if (!repairValidation.valid) {
-      throw new Error(`Repair validation failed: ${repairValidation.errors.join(', ')}`);
+    if (repairErrors.length) {
+      throw new Error(`Repair validation failed: ${repairErrors.join(', ')}`);
     }
 
     return NextResponse.json(
       {
-        ...repairedResult,
+        ...repaired.result,
         source: config.provider,
         warnings: [
-          ...repairedResult.warnings,
+          ...repaired.result.warnings,
           '1차 merge 검증 실패 후 repair prompt로 복구했습니다.',
         ],
       } satisfies PlanMergeAnalysisResult,
