@@ -13,6 +13,7 @@ import {
 } from '../src/planmerge/lib/ai/decisionResolution';
 import {
   conflictsWithForbiddenDirection,
+  documentSectionDefinitions,
   ensureAssumptionBackedBlocksAreReviewed,
   ensureDecisionBlockShape,
   ensureOptionsCiteKnownIdeas,
@@ -24,10 +25,42 @@ import {
   validatePlanMergeAnalysis,
 } from '../src/planmerge/lib/ai/planmergeProtocol';
 import {
+  applyDocumentComposition,
+  findInventedNumbers,
+  validateDocumentCompositionResult,
+} from '../src/planmerge/lib/ai/documentComposition';
+import {
   applyIdeaPlacements,
   validateIdeaPlacementResult,
 } from '../src/planmerge/lib/ai/ideaPlacement';
 import { sampleDrafts, sampleProjectSettings } from '../src/planmerge/lib/localWorkspace';
+
+/** 문서 작성 검증을 돌린다. 모든 결정을 덮는 최소한의 올바른 출력을 기본으로 만든다. */
+function composeSections(
+  overrides: { sectionKey: string; content: string; sourceDecisionBlockIds: string[] }[],
+) {
+  return validateDocumentCompositionResult(
+    { sections: overrides },
+    analysisResult.decisionBlocks,
+    analysisResult.normalizedIdeas,
+    analysisPayload,
+  );
+}
+
+/** 모든 결정을 섹션별로 덮는 정상 출력. 각 케이스가 여기서 한 군데만 망친다. */
+function fullCoverageSections() {
+  const bySection = new Map<string, string[]>();
+
+  analysisResult.decisionBlocks.forEach((block) => {
+    bySection.set(block.sectionKey, [...(bySection.get(block.sectionKey) ?? []), block.id]);
+  });
+
+  return [...bySection.entries()].map(([sectionKey, sourceDecisionBlockIds]) => ({
+    sectionKey,
+    content: '결정된 방향을 하나의 문단으로 정리한 본문입니다.',
+    sourceDecisionBlockIds,
+  }));
+}
 
 /** 배치 판정에 넘길 아이디어. 금지 방향 아이디어는 별도 케이스에서 따로 쓴다. */
 function placeableIdeas(count: number) {
@@ -1085,6 +1118,164 @@ const cases: Array<{ id: string; run: () => string }> = [
       assert.equal(validation.valid, false, 'conflictLevel is derived from severity, so it cannot be absent');
 
       return 'a conflict without severity leaves conflictLevel underivable';
+    },
+  },
+  {
+    id: 'composition-cannot-invent-numbers',
+    run: () => {
+      // 기획 문서에서 날조가 가장 위험한 곳이 숫자다 — 지표, 기간, 금액.
+      const fabricated = fullCoverageSections();
+      fabricated[0] = {
+        ...fabricated[0],
+        content: '주간 활성 사용자를 45% 늘리는 것을 목표로 한다.',
+      };
+
+      const rejected = composeSections(fabricated);
+
+      assert.equal(rejected.valid, false);
+      assert(
+        !rejected.valid && rejected.errors.some((error) => error.includes('45')),
+        'the invented number must be named',
+      );
+
+      // 한 자리 숫자는 목록 번호로도 쓰이므로 검사하지 않는다. 오탐이 502가 된다.
+      const listMarkers = fullCoverageSections();
+      listMarkers[0] = { ...listMarkers[0], content: '1. 첫째 방향 2. 둘째 방향' };
+
+      assert.equal(composeSections(listMarkers).valid, true, 'list markers are not fabricated facts');
+
+      return 'a number that appears nowhere in the sources is rejected; list markers are not';
+    },
+  },
+  {
+    id: 'composition-number-check-ignores-unit-spelling',
+    run: () => {
+      const source = '참가자는 5km 코스를 30분 안에 완주한다';
+
+      assert.deepEqual(findInventedNumbers('30분 목표', source), []);
+      assert.deepEqual(findInventedNumbers('1,000명 목표', source), ['1000']);
+      assert.deepEqual(findInventedNumbers('30킬로가 아니라 30분', source), []);
+
+      return 'the number check compares digits, so unit spelling and thousands separators do not trip it';
+    },
+  },
+  {
+    id: 'composition-must-cover-every-decision',
+    run: () => {
+      const sections = fullCoverageSections();
+      const dropped = sections[0].sourceDecisionBlockIds[0];
+      sections[0] = {
+        ...sections[0],
+        sourceDecisionBlockIds: sections[0].sourceDecisionBlockIds.slice(1),
+      };
+
+      const validation = composeSections(sections);
+
+      assert.equal(validation.valid, false, 'a decision missing from the document drops that opinion');
+      assert(
+        !validation.valid && validation.errors.some((error) => error.includes(dropped)),
+        'the dropped decision must be named',
+      );
+
+      return 'every decision must appear in the document; leaving one out is rejected';
+    },
+  },
+  {
+    id: 'composition-cannot-write-a-section-without-decisions',
+    run: () => {
+      // 결정이 한 섹션에만 있는 상태를 만든다. 나머지 섹션은 채울 근거가 없다.
+      const blocks = analysisResult.decisionBlocks.filter(
+        (block) => block.sectionKey === analysisResult.decisionBlocks[0].sectionKey,
+      );
+      const empty = documentSectionDefinitions.find((section) => section.key !== blocks[0].sectionKey)!;
+      const validation = validateDocumentCompositionResult(
+        {
+          sections: [
+            {
+              sectionKey: blocks[0].sectionKey,
+              content: '결정된 방향을 정리한 본문입니다.',
+              sourceDecisionBlockIds: blocks.map((block) => block.id),
+            },
+            {
+              sectionKey: empty.key,
+              content: '초안에 없지만 그럴듯하게 채운 본문입니다.',
+              sourceDecisionBlockIds: [blocks[0].id],
+            },
+          ],
+        },
+        blocks,
+        analysisResult.normalizedIdeas,
+        analysisPayload,
+      );
+
+      assert.equal(validation.valid, false);
+      assert(
+        !validation.valid && validation.errors.some((error) => error.includes('has no decisions')),
+        'the empty section must be named as the problem',
+      );
+
+      return 'a section with no decisions stays empty instead of being filled with plausible prose';
+    },
+  },
+  {
+    id: 'composition-cannot-cite-another-sections-decision',
+    run: () => {
+      const sections = fullCoverageSections();
+      const other = analysisResult.decisionBlocks.find(
+        (block) => block.sectionKey !== sections[0].sectionKey,
+      );
+
+      assert(other, 'fixture must span more than one section');
+
+      sections[0] = {
+        ...sections[0],
+        sourceDecisionBlockIds: [...sections[0].sourceDecisionBlockIds, other!.id],
+      };
+
+      const validation = composeSections(sections);
+
+      assert.equal(validation.valid, false, 'a decision cannot be evidence for a section it does not belong to');
+
+      return 'section bodies may only cite decisions from their own section';
+    },
+  },
+  {
+    id: 'composition-title-is-the-servers-to-set',
+    run: () => {
+      const sections = fullCoverageSections().map((section) => ({
+        ...section,
+        // 모델이 섹션 이름을 바꾸면 12개 섹션 체계가 흔들린다.
+        title: '내가 붙인 제목',
+      }));
+      const validation = composeSections(sections);
+
+      assert(validation.valid, 'an extra title must not fail the call');
+
+      const applied = applyDocumentComposition(analysisResult, validation.sections);
+
+      applied.finalDocumentSections.forEach((section) => {
+        const definition = documentSectionDefinitions.find((entry) => entry.key === section.sectionKey);
+
+        assert.equal(section.title, definition?.title, 'the title comes from the definition, not the model');
+      });
+
+      assert.equal(validatePlanMergeAnalysis(analysisPayload, applied).valid, true);
+
+      return 'section titles come from the section definitions, so the model cannot rename the document structure';
+    },
+  },
+  {
+    id: 'composition-does-not-judge-prose',
+    run: () => {
+      const sections = fullCoverageSections().map((section) => ({ ...section, content: '정리함.' }));
+
+      assert.equal(
+        composeSections(sections).valid,
+        true,
+        'short prose is a quality signal, not a forgery — the gate scores it, the validator does not reject it',
+      );
+
+      return 'the validator checks facts and references, never style or length';
     },
   },
 ];

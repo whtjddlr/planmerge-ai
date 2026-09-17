@@ -16,15 +16,12 @@ import {
   validatePlanMergeAnalysis,
 } from '@/planmerge/lib/ai/planmergeProtocol';
 import type {
-  DocumentSectionKey,
   DraftNormalizeResult,
   NormalizedIdea,
   NormalizedIdeaIntent,
   NormalizedIdeaType,
   PlanMergeAnalysisPayload,
   PlanMergeAnalysisResult,
-  ProtocolDecisionBlock,
-  ProtocolFinalDocumentSection,
 } from '@/planmerge/lib/ai/planmergeProtocol';
 import {
   addModelUsage,
@@ -33,6 +30,11 @@ import {
   getAnalysisConfig,
 } from '@/planmerge/lib/ai/gmsServer';
 import type { GmsConfig, ModelUsage } from '@/planmerge/lib/ai/gmsServer';
+import {
+  applyDocumentComposition,
+  buildDocumentCompositionPrompt,
+  validateDocumentCompositionResult,
+} from '@/planmerge/lib/ai/documentComposition';
 import {
   applyIdeaPlacements,
   buildIdeaPlacementPrompt,
@@ -75,6 +77,9 @@ const MERGE_MAX_OUTPUT_TOKENS = 32_000;
 
 // 배치 판정은 누락된 아이디어 몇 개만 다루므로 merge보다 훨씬 작다.
 const PLACEMENT_MAX_OUTPUT_TOKENS = 8_000;
+
+// 문서 작성은 섹션 12개 산문이 나오므로 출력이 크다. 입력은 결정 요약뿐이다.
+const COMPOSITION_MAX_OUTPUT_TOKENS = 16_000;
 
 
 const normalizedIdeaTypes = new Set<NormalizedIdeaType>([
@@ -429,12 +434,10 @@ function repairMergeShape(
   };
 }
 
-/** 파생값과 canonical 복원만 남은 마무리. */
+/** 파생값과 canonical 복원만 남은 마무리. 문서 본문은 여기서 만들지 않는다. */
 function finalizeMergeResult(result: PlanMergeAnalysisResult): PlanMergeAnalysisResult {
   return ensureCanonicalMissingSections(
-    ensureAssumptionBackedBlocksAreReviewed(
-      ensureFinalDocumentCoverage(result),
-    ),
+    ensureAssumptionBackedBlocksAreReviewed(result),
   );
 }
 
@@ -461,98 +464,79 @@ async function buildMergeResult(
     return { result: raw, blockers: [] };
   }
 
-  if (!shaped.unplacedIdeas.length) {
-    return { result: finalizeMergeResult(shaped.result), blockers: [] };
+  let current = shaped.result;
+
+  if (shaped.unplacedIdeas.length) {
+    if (exceedsPlacementRecoveryLimit(shaped.unplacedIdeas.length, normalizedIdeas.length)) {
+      return {
+        result: finalizeMergeResult(current),
+        blockers: [
+          `merge 응답이 ${normalizedIdeas.length}개 아이디어 중 ${shaped.unplacedIdeas.length}개를 어떤 옵션의 sourceIdeaIds에도 인용하지 않았습니다. `
+          + '모든 아이디어를 인용하고, 같은 주제를 말하는 아이디어들은 하나의 Decision Block 안에 서로 다른 옵션으로 묶으십시오.',
+        ],
+      };
+    }
+
+    const placementRaw = await callGmsJson<unknown>(
+      buildIdeaPlacementPrompt(payload, current.decisionBlocks, shaped.unplacedIdeas),
+      {
+        maxOutputTokens: PLACEMENT_MAX_OUTPUT_TOKENS,
+        config: options.config,
+        onUsage: options.onUsage,
+      },
+    );
+    const placement = validateIdeaPlacementResult(
+      placementRaw,
+      current.decisionBlocks,
+      shaped.unplacedIdeas,
+    );
+
+    // 검증이 실패하면 서버가 대신 배치하지 않는다. 문서 작성 호출도 내지 않고
+    // repair로 보낸다 — 결정이 확정되지 않았는데 문서를 쓸 이유가 없다.
+    if (!placement.valid) {
+      return {
+        result: finalizeMergeResult(current),
+        blockers: [
+          `배치 판정이 검증을 통과하지 못했습니다(${shaped.unplacedIdeas.length}개 아이디어 미배치): ${placement.errors.slice(0, 3).join(', ')}`,
+        ],
+      };
+    }
+
+    current = applyIdeaPlacements(current, placement.result, shaped.unplacedIdeas);
   }
 
-  if (exceedsPlacementRecoveryLimit(shaped.unplacedIdeas.length, normalizedIdeas.length)) {
-    return {
-      result: finalizeMergeResult(shaped.result),
-      blockers: [
-        `merge 응답이 ${normalizedIdeas.length}개 아이디어 중 ${shaped.unplacedIdeas.length}개를 어떤 옵션의 sourceIdeaIds에도 인용하지 않았습니다. `
-        + '모든 아이디어를 인용하고, 같은 주제를 말하는 아이디어들은 하나의 Decision Block 안에 서로 다른 옵션으로 묶으십시오.',
-      ],
-    };
+  if (!current.decisionBlocks.length) {
+    return { result: finalizeMergeResult(current), blockers: [] };
   }
 
-  const placementRaw = await callGmsJson<unknown>(
-    buildIdeaPlacementPrompt(payload, shaped.result.decisionBlocks, shaped.unplacedIdeas),
+  const compositionRaw = await callGmsJson<unknown>(
+    buildDocumentCompositionPrompt(payload, current.decisionBlocks),
     {
-      maxOutputTokens: PLACEMENT_MAX_OUTPUT_TOKENS,
+      maxOutputTokens: COMPOSITION_MAX_OUTPUT_TOKENS,
       config: options.config,
       onUsage: options.onUsage,
     },
   );
-  const placement = validateIdeaPlacementResult(
-    placementRaw,
-    shaped.result.decisionBlocks,
-    shaped.unplacedIdeas,
+  const composition = validateDocumentCompositionResult(
+    compositionRaw,
+    current.decisionBlocks,
+    current.normalizedIdeas,
+    payload,
   );
 
-  if (!placement.valid) {
+  if (!composition.valid) {
     return {
-      result: finalizeMergeResult(shaped.result),
+      result: finalizeMergeResult(current),
       blockers: [
-        `배치 판정이 검증을 통과하지 못했습니다(${shaped.unplacedIdeas.length}개 아이디어 미배치): ${placement.errors.slice(0, 3).join(', ')}`,
+        `문서 작성이 검증을 통과하지 못했습니다: ${composition.errors.slice(0, 3).join(', ')}`,
       ],
     };
   }
 
   return {
-    result: finalizeMergeResult(
-      applyIdeaPlacements(shaped.result, placement.result, shaped.unplacedIdeas),
-    ),
+    result: finalizeMergeResult(applyDocumentComposition(current, composition.sections)),
     blockers: [],
   };
-}
-
-function ensureFinalDocumentCoverage(result: PlanMergeAnalysisResult): PlanMergeAnalysisResult {
-  const finalSectionKeys = new Set(result.finalDocumentSections.map((section) => section.sectionKey));
-  const blocksBySection = new Map<DocumentSectionKey, ProtocolDecisionBlock[]>();
-
-  result.decisionBlocks.forEach((block) => {
-    blocksBySection.set(block.sectionKey, [...(blocksBySection.get(block.sectionKey) ?? []), block]);
-  });
-
-  const addedSections: ProtocolFinalDocumentSection[] = [];
-
-  blocksBySection.forEach((blocks, sectionKey) => {
-    if (finalSectionKeys.has(sectionKey)) {
-      return;
-    }
-
-    const selectedContents = blocks
-      .map((block) => block.options.find((option) => option.id === block.selectedOptionId)?.content)
-      .filter((content): content is string => Boolean(content?.trim()));
-
-    if (!selectedContents.length) {
-      return;
-    }
-
-    addedSections.push({
-      sectionKey,
-      title: sectionTitle(sectionKey),
-      content: selectedContents.join('\n\n'),
-      sourceDecisionBlockIds: blocks.map((block) => block.id),
-    });
-  });
-
-  if (!addedSections.length) {
-    return result;
-  }
-
-  return {
-    ...result,
-    finalDocumentSections: [...result.finalDocumentSections, ...addedSections],
-    warnings: [
-      ...result.warnings,
-      `${addedSections.length}개 최종 문서 섹션은 서버가 Decision Block 선택안을 기준으로 보강했습니다.`,
-    ],
-  };
-}
-
-function sectionTitle(sectionKey: DocumentSectionKey) {
-  return documentSectionDefinitions.find((section) => section.key === sectionKey)?.title ?? sectionKey;
 }
 
 export async function POST(request: Request) {
