@@ -57,6 +57,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - `scripts/run-planmerge-quality-cases.ts` — 품질 회귀 케이스 정의.
 - `scripts/run-decision-resolution-cases.ts` — Decision Room·프로토콜 불변식 케이스 정의.
 - `scripts/live-scenarios.ts` + `scripts/run-live-scenarios.ts` — 실제 모델이 규칙을 지키는지 보는 E2E 시나리오. 오프라인 하네스가 못 잡는 것(의미 기반 충돌 판정, 프롬프트 인젝션 불복종, 빈약한 입력에 지어내지 않기)을 본다. 공통 불변식에는 `sourceExcerpt`가 실제 초안 원문과 겹치는지 검사가 들어 있어 출처 날조를 잡는다.
+- `scripts/compare-merge-models.ts` + `scripts/compare-decision-models.ts` — 같은 입력에 모델만 바꿔 채점 가능한 항목(섹션 수·출처 커버리지·충돌 유지·금지 방향 선택·짧은 근거)을 비교한다. "조율 모델을 더 키워야 하나"는 이걸로 답한다. 유료 호출이고 추론 모델은 출력이 결정적이지 않아 `COMPARE_REPEATS`로 반복해야 한다 — n=1로 결론 내면 분산을 성능으로 착각한다(실제로 그랬다).
 - `scripts/setup-env.ts` — `npm run setup`. API 키를 받아 검증하고 `.env.local`을 만든다. 키를 받는 웹 엔드포인트는 두지 않는다 — 서버 자격증명을 브라우저에서 쓰게 하면 안 된다.
 
 ## 건드리면 안 되는 것 (변경 전 반드시 확인)
