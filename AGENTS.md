@@ -40,7 +40,13 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 ## 아키텍처 지도
 
-- `src/planmerge/lib/ai/planmergeProtocol.ts` — **시스템의 심장.** 프로토콜 v0.4 타입, 섹션 정의 12개, 프롬프트 빌더 4종, 검증기(`parsePlanMergeAnalysisPayload`, `validateDraftNormalizeResult`, `validatePlanMergeAnalysis`), 회귀 픽스처용 로컬 하네스.
+- `src/planmerge/lib/ai/planmergeProtocol.ts` — **시스템의 심장이자 배럴.** 한 파일이 1,800줄이 되어 역할별로 나눴고, 이 경로는 전부 re-export한다. 호출자 26곳은 바뀌지 않았다. 내부 헬퍼(`protocolInternals.ts`)는 배럴이 내보내지 않는다.
+  - `protocolTypes.ts` — v0.4 타입, 섹션 정의 12개, `MAX_ANALYSIS_DRAFT_COUNT`
+  - `protocolValidation.ts` — 수기 검증기 3종(`parsePlanMergeAnalysisPayload`, `validateDraftNormalizeResult`, `validatePlanMergeAnalysis`)
+  - `protocolPrompts.ts` — 프롬프트 빌더 4종(정규화·병합·구형 단일 분석·복구)
+  - `protocolMigrations.ts` — 저장 결과 버전 올리기, 서버 소유 필드(`ensureServerOwnedEnvelope`, `ensureServerOwnedSelectionSource`), 본문 낡음 파생(`sectionIsStale`)
+  - `protocolRepairs.ts` — 서버 보정 순수 함수, `PLACEMENT_RECOVERABLE_IDEA_LIMIT`
+  - `localHarness.ts` — 회귀 픽스처 전용 로컬 하네스(`runLocalPlanMergeHarness`, `judgeForbiddenDirectionByKeywords`)
 - `src/app/api/analyze/planmerge/route.ts` — AI 파이프라인: draft별 normalize(병렬) → merge → 형태 복구(`repairMergeShape`) → 누락 아이디어가 있으면 배치 판정 호출 → 문서 작성 호출 → 파생값 마무리(`finalizeMergeResult`) → 검증 → 실패 시 repair 프롬프트 재시도 → 그래도 실패면 `502`.
 - `src/app/api/document-sections/compose/route.ts` + `src/planmerge/lib/ai/documentCompositionClient.ts` — "본문 다시 쓰기". 결정이 바뀐 섹션 하나를 같은 프롬프트·검증기로 다시 쓴다. `maxDuration 60`, 10회/분.
 - `src/planmerge/lib/ai/documentComposition.ts` — 문서 작성. 확정된 결정들을 섹션 산문으로 만든다. 프롬프트 규칙은 "결정에 있는 것만 쓴다 / 한 섹션의 여러 결정을 하나의 문단으로 통합한다 / 같은 주장은 한 번만 / **`needsHumanReview`거나 충돌이 있는 결정은 확정문으로 쓰지 않는다** / 작성자 이름을 본문에 넣지 않는다(출처는 Decision Block이 들고 있다) / 결정 없는 섹션은 쓰지 않는다". 검증기는 블록 실존·섹션 일치·모든 결정 반영·숫자 날조만 본다.
