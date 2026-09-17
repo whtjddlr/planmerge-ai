@@ -53,7 +53,6 @@ const opinionKeys = new Set(['id', 'content']);
 const resultSources = new Set<DecisionResolutionResult['source']>([
   'gms',
   'openai',
-  'local_fallback',
 ]);
 
 export const decisionResolutionProposalJsonSchema = {
@@ -129,7 +128,7 @@ export type DecisionResolutionProposal = {
 
 export type DecisionResolutionResult = {
   proposal: DecisionResolutionProposal;
-  source: 'gms' | 'openai' | 'local_fallback';
+  source: 'gms' | 'openai';
   model: string;
   responseId?: string;
   generatedAt: string;
@@ -542,33 +541,6 @@ export function validateDecisionResolutionProposal(
   };
 }
 
-export function createNonApplicableDecisionResolution(
-  payload: DecisionResolutionPayload,
-  warning: string,
-): DecisionResolutionResult {
-  return {
-    proposal: {
-      decisionBlockId: payload.decisionBlockId,
-      status: 'needs_input',
-      summary: '모델 기반 합의안을 안전하게 생성하지 못해 자동 적용 가능한 변경안을 제공하지 않습니다.',
-      recommendedOptionId: null,
-      supportingOptionIds: [],
-      synthesizedDecision: null,
-      revisedSectionContent: null,
-      selectionReason: '검증된 모델 응답이 없어 현재 선택과 출처를 그대로 유지합니다.',
-      addressedOpinionIds: [],
-      clarifyingQuestion: '이 결정을 확정할 때 프로젝트 목표와 금지 방향 중 가장 우선해야 할 기준은 무엇인가요?',
-      unresolvedRisks: ['모델 응답이 없거나 구조 검증을 통과하지 못했습니다.'],
-      confidence: 0,
-    },
-    source: 'local_fallback',
-    model: 'local-rules',
-    generatedAt: new Date().toISOString(),
-    warning,
-    applicable: false,
-  };
-}
-
 export function parseDecisionResolutionResult(
   payload: DecisionResolutionPayload,
   input: unknown,
@@ -613,7 +585,7 @@ export function parseDecisionResolutionResult(
   }
 
   if (proposalValidation.valid && source) {
-    const expectedApplicable = source !== 'local_fallback' && proposalValidation.proposal.status === 'ready';
+    const expectedApplicable = proposalValidation.proposal.status === 'ready';
     if (input.applicable !== expectedApplicable) {
       errors.push('resolution result applicable is inconsistent with source and proposal status');
     }

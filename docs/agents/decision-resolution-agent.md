@@ -124,7 +124,7 @@ Required invariant:
 no validated model response  =>  502 / 503, never a rule-based result
 ```
 
-Fallback content may help explain what input is missing, but it cannot be accepted as an AI-backed section resolution.
+There is no fallback content. Without a key the route answers 503; when the model call or validation fails it answers 502. A rule-based "resolution" would be a decision nobody made.
 
 ## Server validation checklist
 
@@ -163,6 +163,6 @@ The quality harness should retain cases for at least:
 - an unknown supporting option/source ID;
 - a patch targeting the wrong section;
 - a prompt-injection attempt inside option or source text;
-- missing API key or upstream failure producing non-applicable fallback;
+- missing API key (503) or upstream failure (502) — the client shows the reason instead of a substitute result;
 - failed protocol validation never being labeled as GPT-5.6 output;
 - unaffected final-document sections remaining byte-for-byte unchanged after application.

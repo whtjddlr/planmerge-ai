@@ -79,6 +79,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
    - **문서 작성의 위조 검사는 숫자를 본다.** 본문의 숫자가 근거 블록·아이디어·프로젝트 기준 어디에도 없으면 거부한다. 기획 문서에서 날조가 가장 위험한 값이 지표·기간·금액이다. 단, **두 자리 이상만** 본다 — 한 자리는 목록 번호("1. 첫째")로도 쓰여서 오탐이 `502`가 된다. 그래서 한 자리 숫자 날조는 이 검사로 잡히지 않는다. 문체와 길이는 검사하지 않는다(그건 Quality Gate의 축이다).
    - `ensureAssumptionBackedBlocksAreReviewed`는 선택안이 `intent`가 `assume`/`question`인 아이디어에만 근거할 때 `needsHumanReview`를 켠다. `confidence`는 "초안에 그렇게 쓰여 있는가"를 잴 뿐 "확인됐는가"를 재지 않아서, 한 줄짜리 추측을 충실히 옮기면 confidence 0.95에 검토 불필요로 나올 수 있다. 실제 모델 테스트에서 발견한 경우다. 순수 함수라 `planmergeProtocol.ts`에 두고 회귀 케이스가 직접 호출한다.
 4. **정직한 실패.** (2026-09-16 변경, 이전의 "폴백 설계"를 대체) 제품 경로는 모델 결과를 만들지 못하면 규칙 기반 결과를 성공처럼 반환하지 않는다. `/api/analyze/planmerge`, `/api/decision-blocks/:id/resolution`, `/api/decision-blocks/:id/opinion-clusters`는 모두 키 미설정 시 `503`, 모델 호출·검증 실패 시 `502`를 `{ code, errors }` 형태로 반환한다. 업스트림 오류 본문은 서버 로그에만 남기고 클라이언트에 노출하지 않는다. `runLocalPlanMergeHarness`는 `scripts/`에서만 호출한다. `src/` 안에서 이 함수를 부르는 코드가 생기면 규칙 위반이다.
+   - Decision Room 결과의 `source`는 `gms | openai`만이다. `local_fallback`과 그것을 만들던 `createNonApplicableDecisionResolution`(호출자 0)은 제거했고, 파서가 그 값을 거부한다(`non-applicable-result-never-applies` 케이스). 모델이 `needs_input`으로 답하면 적용할 것이 없다고 정직하게 말하는 것이고, 그건 폴백이 아니다.
 5. **수기 검증기는 의도된 설계다.** Zod 등 스키마 라이브러리 도입은 별도 합의 없이 하지 않는다. 검증 규칙을 바꾸면 반드시 `run-planmerge-quality-cases.ts`에 케이스를 추가/갱신한다.
 6. **`protocolVersion: '0.3'`.** 프로토콜 형태를 바꾸는 변경은 버전 상향 + 문서 갱신과 함께만 한다.
    - **버전을 올리면 마이그레이션을 먼저 검토한다.** `upgradeStoredAnalysisResult`가 저장된 이전 버전 결과를 올린다. 유도할 수 있는 정보는 유도하고(v0.2의 `selectionSource`는 기존 접두사에서), 날조해야 하는 정보만 포기한다(v0.1의 `forbiddenDirectionConflict`는 의미 판정이라 만들 수 없으므로 검증에서 떨어뜨린다). 로드 직후 자동저장이 돌기 때문에, 마이그레이션 없이 버리면 원본이 영구히 사라진다.
@@ -87,6 +88,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
    - 키는 워크스페이스 상태(`LocalWorkspaceState`)에 넣지 않는다. 내보내기·공유 스냅샷에 섞이면 안 되므로 별도 localStorage 항목으로 분리해 둔다.
    - 화면에는 `maskApiKey`를 거친 형태만 보여준다.
 8. **시연용 고정값 금지.** 화면에 보이는 수치는 실제 데이터에서 계산한다. 과거에 `verifiedSampleSummary`가 `conflictCount: 1`, `qualityScore: 100`을 상수로 들고 있었고 툴바에는 "3개의 AI 초안에서 42개의 아이디어를 추출했습니다"가 박혀 있었다. 샘플 워크스페이스도 하네스가 만든 병합 결과를 미리 실어 실제 분석과 똑같이 렌더링했다. 이런 값은 분석을 돌리기 전에는 알 수 없으므로 화면에 두지 않는다.
+   - `src/planmerge/data/mergeResult.ts`는 **타입만** 내보낸다. 한때 시연용 문서 12섹션(`sections`)과 결정 trace 5개(`decisionTraces`)가 여기 상수로 있었고, `DecisionPanel`은 실제 블록이 없는 섹션에서 `getDecisionTrace()`로 떨어져 이 고정값을 렌더링했다. 실제 분석이 "개요"를 비워 두면 화면에 "자동 선택 — 세 초안 모두 …"라는 가짜 근거가 떴다(이번 실측은 9/12 섹션이었으니 실제로 보이는 화면이었다). 그것도 없으면 섹션 본문을 "자동 선택"으로 포장해 "여러 초안에서 의미가 유사한 내용을 묶어 정리했습니다"라고 적었다. 지금 `getDecisionTrace`는 결정이 없으면 **없다고만** 말한다 — 왜 없는지(초안이 부족했다 등)를 추측해 적는 것도 날조다.
 9. **금지 방향 위반은 Quality Gate를 차단한다.** `analysisQuality.ts`는 선택안의 근거 아이디어가 `forbiddenDirectionConflict.conflicts`인 블록을 세어 `forbidden_direction_compliance` 메트릭과 `blocked` finding을 만들고, 등급을 스키마 오류와 같은 하드 블록으로 내린다. 평균에 희석되게 두면 12개 중 1건 위반이 100점 Ready로 나온다(실제로 그랬다).
    - 사람이 충돌 의견을 선택안으로 덮어쓰는 것은 정당한 권한이지만 위반을 해소하지는 않는다. `applyDecisionOptionOverride`는 충돌 옵션을 선택하면 `needsHumanReview`를 유지한다.
    - 차단 문구는 실제 사유를 말한다. "구조 오류 또는 근거 부족"으로 뭉뚱그리면 사용자가 엉뚱한 곳을 고치러 간다.

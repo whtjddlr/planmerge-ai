@@ -1,7 +1,7 @@
 import { useLayoutEffect, useMemo, useRef } from 'react';
 import { DocumentSection } from './DocumentSection';
 import { StatusBadge } from './StatusBadge';
-import { sections as defaultSections, type DocumentSectionData } from '../data/mergeResult';
+import type { DocumentSectionData } from '../data/mergeResult';
 import type { LocalDraftSubmission, ProjectSettings } from '../lib/localWorkspace';
 import { evaluateAnalysisQuality } from '../lib/analysisQuality';
 import type { AnalysisQualityReport, QualityLevel, QualityMetric } from '../lib/analysisQuality';
@@ -10,7 +10,7 @@ import type { PlanMergeAnalysisResult } from '../lib/ai/planmergeProtocol';
 type DocumentContentProps = {
   activeSection: number;
   analysisResult?: PlanMergeAnalysisResult;
-  documentSections?: DocumentSectionData[];
+  documentSections: DocumentSectionData[];
   drafts: LocalDraftSubmission[];
   onSectionSelect: (sectionNumber: number) => void;
   project: ProjectSettings;
@@ -26,7 +26,7 @@ const documentTypeLabels: Record<ProjectSettings['documentType'], string> = {
 export function DocumentContent({
   activeSection,
   analysisResult,
-  documentSections = defaultSections,
+  documentSections,
   drafts,
   onSectionSelect,
   project,

@@ -306,8 +306,21 @@ const cases: Array<{ id: string; run: () => string }> = [
     },
   },
   {
-    id: 'fallback-never-applies',
+    id: 'non-applicable-result-never-applies',
     run: () => {
+      // 모델이 needs_input으로 답하면 적용할 것이 없다. 예전에는 이 자리에
+      // source 'local_fallback'이 있었는데, 폴백 자체를 제거했으므로 그 값은
+      // 이제 파서가 거부해야 한다(규칙 4).
+      const rejected = parseDecisionResolutionResult(resolutionPayload, {
+        proposal: { ...readyProposal },
+        source: 'local_fallback',
+        model: 'local-rules',
+        generatedAt: '2026-07-16T00:02:00.000Z',
+        applicable: false,
+      });
+
+      assert.equal(rejected.valid, false, 'a local_fallback source must no longer parse');
+
       const fallback: DecisionResolutionResult = {
         proposal: {
           ...readyProposal,
@@ -319,16 +332,16 @@ const cases: Array<{ id: string; run: () => string }> = [
           selectionReason: '검증된 모델 응답이 없어 기존 결정을 유지합니다.',
           clarifyingQuestion: '프로젝트에서 가장 우선할 결정 기준은 무엇인가요?',
         },
-        source: 'local_fallback',
-        model: 'local-rules',
+        source: 'openai',
+        model: 'gpt-5.6-luna',
         generatedAt: '2026-07-16T00:02:00.000Z',
-        warning: 'No model provider configured.',
+        warning: '근거가 부족해 질문으로 답했습니다.',
         applicable: false,
       };
       const parsed = parseDecisionResolutionResult(resolutionPayload, fallback);
       assert.equal(parsed.valid, true, parsed.errors.join('; '));
       assert.strictEqual(applyDecisionResolutionProposal(analysisResult, fallback), analysisResult);
-      return 'keyless fallback is explicit and cannot mutate the plan';
+      return 'a needs_input result is honest about having nothing to apply, and cannot mutate the plan';
     },
   },
   {

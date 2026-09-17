@@ -58,7 +58,6 @@ export function applyDecisionResolutionProposal(
 
   if (
     !result.applicable ||
-    result.source === 'local_fallback' ||
     proposal.status !== 'ready' ||
     !proposal.synthesizedDecision?.trim() ||
     !proposal.revisedSectionContent?.trim()

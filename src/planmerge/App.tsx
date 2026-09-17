@@ -857,7 +857,6 @@ export default function App() {
 
     if (
       !result.applicable ||
-      result.source === 'local_fallback' ||
       result.proposal.status !== 'ready'
     ) {
       showNotice('검증된 합의안만 적용할 수 있습니다.');

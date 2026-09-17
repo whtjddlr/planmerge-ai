@@ -88,7 +88,7 @@ The decision-resolution response envelope is:
 ```ts
 type DecisionResolutionResult = {
   proposal: DecisionResolutionProposal;
-  source: 'gms' | 'openai' | 'local_fallback';
+  source: 'gms' | 'openai';
   model: string;
   responseId?: string;
   generatedAt: string;
