@@ -5,12 +5,11 @@ import {
   MAX_ANALYSIS_DRAFT_COUNT,
   buildMergeNormalizedIdeasPrompt,
   buildPlanMergeRepairPrompt,
-  conflictsWithForbiddenDirection,
   documentSectionDefinitions,
   parsePlanMergeAnalysisPayload,
   ensureAssumptionBackedBlocksAreReviewed,
   ensureDecisionBlockShape,
-  exceedsServerAuthoredLimit,
+  exceedsPlacementRecoveryLimit,
   ensureOptionsCiteKnownIdeas,
   ensureServerOwnedSelectionSource,
   validateDraftNormalizeResult,
@@ -25,7 +24,6 @@ import type {
   PlanMergeAnalysisPayload,
   PlanMergeAnalysisResult,
   ProtocolDecisionBlock,
-  ProtocolDecisionOption,
   ProtocolFinalDocumentSection,
 } from '@/planmerge/lib/ai/planmergeProtocol';
 import {
@@ -35,6 +33,11 @@ import {
   getAnalysisConfig,
 } from '@/planmerge/lib/ai/gmsServer';
 import type { GmsConfig, ModelUsage } from '@/planmerge/lib/ai/gmsServer';
+import {
+  applyIdeaPlacements,
+  buildIdeaPlacementPrompt,
+  validateIdeaPlacementResult,
+} from '@/planmerge/lib/ai/ideaPlacement';
 import { checkRateLimit, getClientKey } from '@/server/rateLimit';
 
 // 초안 30개 × normalize 1회 + merge까지 한 요청 안에서 끝나야 한다. 플랫폼 기본
@@ -69,6 +72,9 @@ const NORMALIZE_CONCURRENCY = readNormalizeConcurrency();
 // merge 출력은 초안 수에 따라 커진다. 예산이 모자라면 응답이 incomplete로 잘려
 // 전체 요청이 실패하므로, 아이디어 에코를 없앤 뒤에도 여유를 둔다.
 const MERGE_MAX_OUTPUT_TOKENS = 32_000;
+
+// 배치 판정은 누락된 아이디어 몇 개만 다루므로 merge보다 훨씬 작다.
+const PLACEMENT_MAX_OUTPUT_TOKENS = 8_000;
 
 
 const normalizedIdeaTypes = new Set<NormalizedIdeaType>([
@@ -374,194 +380,129 @@ function coerceMergeResultShape(result: unknown): PlanMergeAnalysisResult | unde
 /**
  * merge 결과를 그대로 내보낼 수 없게 만드는 사유를 모은다.
  *
- * 스키마 위반만 보면 안 된다. 서버가 문서를 대신 써 버린 결과는 **스키마상 완벽하다** —
- * 출처도 붙어 있고 선택안도 하나씩 있다. 그래서 검증기는 통과시키고, 충돌 0인 문서가
- * 정상 응답으로 나간다. 재건 규모를 같은 자리에서 같이 봐야 한다.
+ * 스키마 위반만 보면 안 된다. 배치를 서버가 룰로 대신한 결과는 **스키마상
+ * 완벽했다** — 출처도 붙어 있고 선택안도 하나씩 있어서 검증기가 통과시켰고,
+ * 충돌 0인 문서가 정상 응답으로 나갔다. 그래서 배치 실패를 같은 자리에서 본다.
  */
 function collectMergeBlockers(
   payload: PlanMergeAnalysisPayload,
-  merge: PostProcessedMerge,
-  normalizedIdeas: NormalizedIdea[],
+  merge: BuiltMergeResult,
 ): string[] {
-  const errors = validatePlanMergeAnalysis(payload, merge.result).errors;
-
-  if (!merge.exceedsServerAuthoredLimit) {
-    return errors;
-  }
-
-  return [
-    `merge 응답이 ${normalizedIdeas.length}개 아이디어 중 ${merge.serverAuthoredIdeaCount}개를 어떤 옵션의 sourceIdeaIds에도 인용하지 않았습니다. `
-    + '모든 아이디어를 인용하고, 같은 주제를 말하는 아이디어들은 하나의 Decision Block 안에 서로 다른 옵션으로 묶으십시오. '
-    + '서버는 누락된 아이디어를 대신 배치하지 않습니다.',
-    ...errors,
-  ];
+  return [...merge.blockers, ...validatePlanMergeAnalysis(payload, merge.result).errors];
 }
 
-type PostProcessedMerge = {
+type BuiltMergeResult = {
   result: PlanMergeAnalysisResult;
-  /** 모델이 인용하지 않아 서버가 Decision Block을 대신 쓴 아이디어 수. */
-  serverAuthoredIdeaCount: number;
-  /** 서버가 쓴 분량이 `SERVER_AUTHORED_IDEA_LIMIT`를 넘었는가. */
-  exceedsServerAuthoredLimit: boolean;
+  /** 그대로 내보낼 수 없게 만드는 사유. 있으면 repair, 그래도 안 되면 502. */
+  blockers: string[];
 };
 
-function postProcessMergeResult(
-  payload: PlanMergeAnalysisPayload,
+/**
+ * 모델이 되돌릴 수 있는 형태로 정리한다. 여기까지는 모델 호출이 없다.
+ *
+ * 남는 `unplacedIdeas`는 어떤 옵션도 인용하지 않은 아이디어다. 서버는 이걸
+ * 배치하지 않는다 — 배치는 "어느 결정에 속하는가"와 "채택안인가"를 정하는
+ * 판단이라 룰로 할 수 없다(과거 실측: topic 문자열 일치 0/67, 전부 서버가
+ * 블록을 만들어 충돌 0인 문서가 됐다).
+ */
+function repairMergeShape(
   result: PlanMergeAnalysisResult,
   normalizedIdeas: NormalizedIdea[],
-): PostProcessedMerge {
+): { result: PlanMergeAnalysisResult; unplacedIdeas: NormalizedIdea[] } | undefined {
   const coerced = coerceMergeResultShape(result);
 
   if (!coerced) {
-    return { result, serverAuthoredIdeaCount: 0, exceedsServerAuthoredLimit: false };
+    return undefined;
   }
 
   const canonical = ensureMergeUsesCanonicalIdeas(coerced, normalizedIdeas);
   const cited = ensureOptionsCiteKnownIdeas(canonical, normalizedIdeas);
   const shaped = ensureDecisionBlockShape(cited);
   const owned = ensureServerOwnedSelectionSource(shaped);
-  const covered = ensureDecisionBlockCoverage(payload, owned);
-  const complete = ensureFinalDocumentCoverage(covered.result);
-  const reviewed = ensureAssumptionBackedBlocksAreReviewed(complete);
-
-  return {
-    result: ensureCanonicalMissingSections(reviewed),
-    serverAuthoredIdeaCount: covered.serverAuthoredIdeaCount,
-    exceedsServerAuthoredLimit: exceedsServerAuthoredLimit(
-      covered.serverAuthoredIdeaCount,
-      normalizedIdeas.length,
-    ),
-  };
-}
-
-type CoverageResult = { result: PlanMergeAnalysisResult; serverAuthoredIdeaCount: number };
-
-function ensureDecisionBlockCoverage(
-  payload: PlanMergeAnalysisPayload,
-  result: PlanMergeAnalysisResult,
-): CoverageResult {
   const citedIdeaIds = new Set(
-    result.decisionBlocks.flatMap((block) =>
-      block.options.flatMap((option) => option.sourceIdeaIds),
-    ),
+    owned.decisionBlocks.flatMap((block) => block.options.flatMap((option) => option.sourceIdeaIds)),
   );
-  const uncoveredIdeas = result.normalizedIdeas.filter((idea) => !citedIdeaIds.has(idea.id));
-
-  if (!uncoveredIdeas.length) {
-    return { result, serverAuthoredIdeaCount: 0 };
-  }
-
-  const existingBlockIds = new Set(result.decisionBlocks.map((block) => block.id));
-  const existingOptionIds = new Set(result.decisionBlocks.flatMap((block) => block.options.map((option) => option.id)));
-  const nextDecisionBlocks = result.decisionBlocks.map((block) => ({
-    ...block,
-    options: [...block.options],
-  }));
-  const ideasForNewBlocks: NormalizedIdea[] = [];
-  let attachedOptionCount = 0;
-
-  uncoveredIdeas.forEach((idea) => {
-    const targetBlock = nextDecisionBlocks.find((block) =>
-      block.sectionKey === idea.sectionKey &&
-      normalizeTopic(block.topic) === normalizeTopic(idea.topic),
-    );
-
-    if (!targetBlock) {
-      ideasForNewBlocks.push(idea);
-      return;
-    }
-
-    const selectedOption = targetBlock.options.find((option) => option.id === targetBlock.selectedOptionId);
-    const isConflict = conflictsWithForbiddenDirection(idea);
-    const optionType: ProtocolDecisionOption['optionType'] = isConflict ? 'conflict' : 'alternative';
-
-    targetBlock.options.push({
-      id: uniqueId(`server_option_${safeId(idea.id)}`, existingOptionIds),
-      optionType,
-      content: idea.normalizedText,
-      differenceFromSelected: selectedOption
-        ? `${selectedOption.content}와 기준 적용 방향이 다릅니다.`
-        : '기존 선택안과 다른 방향의 의견입니다.',
-      severity: isConflict ? 'high' : undefined,
-      sourceIdeaIds: [idea.id],
-    });
-    targetBlock.conflictLevel = inferConflictLevelFromOptions(targetBlock.options);
-    targetBlock.needsHumanReview = targetBlock.needsHumanReview || isConflict || idea.confidence < 0.65;
-    targetBlock.confidence = Math.min(targetBlock.confidence, Math.max(0.58, idea.confidence));
-    attachedOptionCount += 1;
-  });
-
-  const ideasBySectionTopic = new Map<string, NormalizedIdea[]>();
-
-  ideasForNewBlocks.forEach((idea) => {
-    const key = `${idea.sectionKey}::${normalizeTopic(idea.topic)}`;
-
-    ideasBySectionTopic.set(key, [...(ideasBySectionTopic.get(key) ?? []), idea]);
-  });
-
-  const addedBlocks = Array.from(ideasBySectionTopic.values()).map((ideas, index) =>
-    createServerDecisionBlock(payload, ideas, index, existingBlockIds, existingOptionIds),
-  );
-  const warnings = [
-    ...result.warnings,
-    `merge 응답이 반영하지 않은 ${uncoveredIdeas.length}개 아이디어를 서버에서 Decision Block에 보강했습니다.`,
-  ];
-
-  if (attachedOptionCount > 0) {
-    warnings.push(`${attachedOptionCount}개 아이디어는 기존 Decision Block의 대안/충돌 선택지로 연결했습니다.`);
-  }
-
-  if (addedBlocks.length > 0) {
-    warnings.push(`${addedBlocks.length}개 Decision Block은 서버가 검증된 출처 아이디어 기준으로 생성했습니다.`);
-  }
 
   return {
-    result: {
-      ...result,
-      decisionBlocks: [...nextDecisionBlocks, ...addedBlocks],
-      warnings,
-    },
-    serverAuthoredIdeaCount: uncoveredIdeas.length,
+    result: owned,
+    unplacedIdeas: owned.normalizedIdeas.filter((idea) => !citedIdeaIds.has(idea.id)),
   };
 }
 
-function createServerDecisionBlock(
-  payload: PlanMergeAnalysisPayload,
-  ideas: NormalizedIdea[],
-  index: number,
-  existingBlockIds: Set<string>,
-  existingOptionIds: Set<string>,
-): ProtocolDecisionBlock {
-  const selectedIdea = chooseServerSelectedIdea(ideas);
-  const options = ideas.map((idea) => {
-    const isSelected = idea.id === selectedIdea.id;
-    const isConflict = !isSelected && conflictsWithForbiddenDirection(idea);
+/** 파생값과 canonical 복원만 남은 마무리. */
+function finalizeMergeResult(result: PlanMergeAnalysisResult): PlanMergeAnalysisResult {
+  return ensureCanonicalMissingSections(
+    ensureAssumptionBackedBlocksAreReviewed(
+      ensureFinalDocumentCoverage(result),
+    ),
+  );
+}
 
+/**
+ * merge 응답을 내보낼 수 있는 결과로 만든다. 누락된 아이디어가 있으면
+ * **모델에 배치 판정을 묻는다.**
+ *
+ * 세 갈래다.
+ * - 누락 없음 → 호출 없이 마무리.
+ * - 누락이 `PLACEMENT_RECOVERABLE_IDEA_LIMIT`를 넘음 → merge 자체가 실패한
+ *   것이므로 배치 판정으로 메우지 않고 blocker로 올려 repair로 보낸다.
+ * - 그 아래 → 배치 판정 호출 1건(입력이 작다: 블록 요약 + 누락 아이디어만).
+ *   검증이 실패하면 서버가 대신 배치하지 않고 blocker로 올린다.
+ */
+async function buildMergeResult(
+  payload: PlanMergeAnalysisPayload,
+  raw: PlanMergeAnalysisResult,
+  normalizedIdeas: NormalizedIdea[],
+  options: { config: GmsConfig; onUsage: (usage: ModelUsage) => void },
+): Promise<BuiltMergeResult> {
+  const shaped = repairMergeShape(raw, normalizedIdeas);
+
+  if (!shaped) {
+    return { result: raw, blockers: [] };
+  }
+
+  if (!shaped.unplacedIdeas.length) {
+    return { result: finalizeMergeResult(shaped.result), blockers: [] };
+  }
+
+  if (exceedsPlacementRecoveryLimit(shaped.unplacedIdeas.length, normalizedIdeas.length)) {
     return {
-      id: uniqueId(`server_option_${safeId(idea.id)}`, existingOptionIds),
-      optionType: isSelected ? 'selected' : isConflict ? 'conflict' : 'alternative',
-      content: idea.normalizedText,
-      differenceFromSelected: isSelected
-        ? undefined
-        : `${selectedIdea.normalizedText}와 기준 적용 방향이 다릅니다.`,
-      severity: isConflict ? 'high' : undefined,
-      sourceIdeaIds: [idea.id],
-    } satisfies ProtocolDecisionOption;
-  });
-  const conflictLevel = inferConflictLevelFromOptions(options);
+      result: finalizeMergeResult(shaped.result),
+      blockers: [
+        `merge 응답이 ${normalizedIdeas.length}개 아이디어 중 ${shaped.unplacedIdeas.length}개를 어떤 옵션의 sourceIdeaIds에도 인용하지 않았습니다. `
+        + '모든 아이디어를 인용하고, 같은 주제를 말하는 아이디어들은 하나의 Decision Block 안에 서로 다른 옵션으로 묶으십시오.',
+      ],
+    };
+  }
+
+  const placementRaw = await callGmsJson<unknown>(
+    buildIdeaPlacementPrompt(payload, shaped.result.decisionBlocks, shaped.unplacedIdeas),
+    {
+      maxOutputTokens: PLACEMENT_MAX_OUTPUT_TOKENS,
+      config: options.config,
+      onUsage: options.onUsage,
+    },
+  );
+  const placement = validateIdeaPlacementResult(
+    placementRaw,
+    shaped.result.decisionBlocks,
+    shaped.unplacedIdeas,
+  );
+
+  if (!placement.valid) {
+    return {
+      result: finalizeMergeResult(shaped.result),
+      blockers: [
+        `배치 판정이 검증을 통과하지 못했습니다(${shaped.unplacedIdeas.length}개 아이디어 미배치): ${placement.errors.slice(0, 3).join(', ')}`,
+      ],
+    };
+  }
 
   return {
-    id: uniqueId(`server_decision_${safeId(ideas[0]?.sectionKey ?? 'section')}_${index + 1}`, existingBlockIds),
-    sectionKey: selectedIdea.sectionKey,
-    topic: selectedIdea.topic,
-    selectedOptionId: options.find((option) => option.optionType === 'selected')?.id ?? options[0].id,
-    selectionReason: 'merge 응답이 이 아이디어를 Decision Block에 반영하지 않아, 서버가 검증된 출처 아이디어를 기준으로 보강했습니다.',
-    // 서버가 만든 블록이므로 출처도 서버가 기록한다.
-    selectionSource: 'merge',
-    confidence: Math.min(Math.max(selectedIdea.confidence, 0.58), 0.82),
-    conflictLevel,
-    needsHumanReview: conflictLevel !== 'none' || selectedIdea.confidence < 0.65,
-    options,
+    result: finalizeMergeResult(
+      applyIdeaPlacements(shaped.result, placement.result, shaped.unplacedIdeas),
+    ),
+    blockers: [],
   };
 }
 
@@ -610,45 +551,8 @@ function ensureFinalDocumentCoverage(result: PlanMergeAnalysisResult): PlanMerge
   };
 }
 
-function chooseServerSelectedIdea(ideas: NormalizedIdea[]) {
-  return ideas.find((idea) => !conflictsWithForbiddenDirection(idea)) ?? ideas[0];
-}
-
-function inferConflictLevelFromOptions(options: ProtocolDecisionOption[]): ProtocolDecisionBlock['conflictLevel'] {
-  const conflictSeverities = options
-    .filter((option) => option.optionType === 'conflict')
-    .map((option) => option.severity);
-
-  if (conflictSeverities.includes('high')) return 'high';
-  if (conflictSeverities.includes('medium')) return 'medium';
-  if (conflictSeverities.includes('low')) return 'low';
-  return 'none';
-}
-
-function normalizeTopic(topic: string) {
-  return topic.trim().toLowerCase().replace(/\s+/g, ' ');
-}
-
 function sectionTitle(sectionKey: DocumentSectionKey) {
   return documentSectionDefinitions.find((section) => section.key === sectionKey)?.title ?? sectionKey;
-}
-
-function safeId(input: string) {
-  return input.replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 80) || 'item';
-}
-
-function uniqueId(prefix: string, existingIds: Set<string>) {
-  let candidate = prefix;
-  let suffix = 2;
-
-  while (existingIds.has(candidate)) {
-    candidate = `${prefix}_${suffix}`;
-    suffix += 1;
-  }
-
-  existingIds.add(candidate);
-
-  return candidate;
 }
 
 export async function POST(request: Request) {
@@ -714,8 +618,11 @@ export async function POST(request: Request) {
       mergePrompt,
       { maxOutputTokens: MERGE_MAX_OUTPUT_TOKENS, config, onUsage: collectUsage },
     );
-    const merge = postProcessMergeResult(payload, mergeResultRaw, normalizedIdeas);
-    const mergeErrors = collectMergeBlockers(payload, merge, normalizedIdeas);
+    const merge = await buildMergeResult(payload, mergeResultRaw, normalizedIdeas, {
+      config,
+      onUsage: collectUsage,
+    });
+    const mergeErrors = collectMergeBlockers(payload, merge);
 
     if (!mergeErrors.length) {
       return NextResponse.json(
@@ -731,8 +638,11 @@ export async function POST(request: Request) {
       buildPlanMergeRepairPrompt(payload, merge.result, mergeErrors, normalizedIdeas),
       { maxOutputTokens: MERGE_MAX_OUTPUT_TOKENS, config, onUsage: collectUsage },
     );
-    const repaired = postProcessMergeResult(payload, repairedResultRaw, normalizedIdeas);
-    const repairErrors = collectMergeBlockers(payload, repaired, normalizedIdeas);
+    const repaired = await buildMergeResult(payload, repairedResultRaw, normalizedIdeas, {
+      config,
+      onUsage: collectUsage,
+    });
+    const repairErrors = collectMergeBlockers(payload, repaired);
 
     if (repairErrors.length) {
       throw new Error(`Repair validation failed: ${repairErrors.join(', ')}`);

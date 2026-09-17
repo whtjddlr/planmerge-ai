@@ -17,13 +17,28 @@ import {
   ensureDecisionBlockShape,
   ensureOptionsCiteKnownIdeas,
   ensureServerOwnedSelectionSource,
-  exceedsServerAuthoredLimit,
-  SERVER_AUTHORED_IDEA_LIMIT,
+  exceedsPlacementRecoveryLimit,
+  PLACEMENT_RECOVERABLE_IDEA_LIMIT,
   upgradeStoredAnalysisResult,
   runLocalPlanMergeHarness,
   validatePlanMergeAnalysis,
 } from '../src/planmerge/lib/ai/planmergeProtocol';
+import {
+  applyIdeaPlacements,
+  validateIdeaPlacementResult,
+} from '../src/planmerge/lib/ai/ideaPlacement';
 import { sampleDrafts, sampleProjectSettings } from '../src/planmerge/lib/localWorkspace';
+
+/** 배치 판정에 넘길 아이디어. 금지 방향 아이디어는 별도 케이스에서 따로 쓴다. */
+function placeableIdeas(count: number) {
+  const ideas = analysisResult.normalizedIdeas.filter((idea) => !conflictsWithForbiddenDirection(idea));
+
+  if (ideas.length < count) {
+    throw new Error(`fixture must contain at least ${count} placeable ideas`);
+  }
+
+  return ideas.slice(0, count);
+}
 
 type CaseSummary = {
   id: string;
@@ -778,26 +793,26 @@ const cases: Array<{ id: string; run: () => string }> = [
     },
   },
   {
-    id: 'server-authored-rebuild-over-half-is-not-a-result',
+    id: 'placement-recovery-over-half-is-a-merge-failure',
     run: () => {
       const ideaCount = 25;
 
-      // 몇 개 줍는 것은 보강이다. 절반을 넘기면 문서를 서버가 쓴 것이다.
-      assert.equal(exceedsServerAuthoredLimit(1, ideaCount), false);
-      assert.equal(exceedsServerAuthoredLimit(12, ideaCount), false);
-      assert.equal(exceedsServerAuthoredLimit(13, ideaCount), true);
-      assert.equal(exceedsServerAuthoredLimit(ideaCount, ideaCount), true);
+      // 몇 개 누락은 배치 판정으로 메운다. 절반을 넘으면 merge가 실패한 것이다.
+      assert.equal(exceedsPlacementRecoveryLimit(1, ideaCount), false);
+      assert.equal(exceedsPlacementRecoveryLimit(12, ideaCount), false);
+      assert.equal(exceedsPlacementRecoveryLimit(13, ideaCount), true);
+      assert.equal(exceedsPlacementRecoveryLimit(ideaCount, ideaCount), true);
 
       // 아이디어가 없으면 나눌 것도 없다. 0으로 나눠 NaN을 만들지 않는다.
-      assert.equal(exceedsServerAuthoredLimit(0, 0), false);
+      assert.equal(exceedsPlacementRecoveryLimit(0, 0), false);
 
       assert.equal(
-        SERVER_AUTHORED_IDEA_LIMIT,
+        PLACEMENT_RECOVERABLE_IDEA_LIMIT,
         0.5,
         'the limit is a policy number — changing it changes what counts as a result',
       );
 
-      return 'the server may top up a few ideas but may not author most of the document';
+      return 'a few missing ideas go to the placement call; most of them missing means merge failed';
     },
   },
   {
@@ -824,12 +839,252 @@ const cases: Array<{ id: string; run: () => string }> = [
       const uncovered = analysisResult.normalizedIdeas.length - citedIdeaIds.size;
 
       assert.equal(
-        exceedsServerAuthoredLimit(uncovered, analysisResult.normalizedIdeas.length),
+        exceedsPlacementRecoveryLimit(uncovered, analysisResult.normalizedIdeas.length),
         true,
         'a fully unlinked merge must be handed back to the model, not rebuilt by the server',
       );
 
       return 'a merge that strips every source link is a failure, not an input to a server rebuild';
+    },
+  },
+  {
+    id: 'placement-cannot-cite-an-invented-id',
+    run: () => {
+      const ideas = placeableIdeas(2);
+      const invented = validateIdeaPlacementResult(
+        {
+          placements: [{
+            ideaId: ideas[0].id,
+            blockId: 'decision_that_does_not_exist',
+            optionType: 'alternative',
+            differenceFromSelected: '다른 방향입니다.',
+          }],
+          newBlocks: [],
+        },
+        analysisResult.decisionBlocks,
+        ideas,
+      );
+
+      assert.equal(invented.valid, false);
+      assert(
+        !invented.valid && invented.errors.some((error) => error.includes('does not exist')),
+        'an invented blockId must be named as the problem',
+      );
+
+      const strayIdea = validateIdeaPlacementResult(
+        {
+          placements: [{
+            ideaId: 'draft-nobody_idea_9',
+            blockId: analysisResult.decisionBlocks[0].id,
+            optionType: 'alternative',
+          }],
+          newBlocks: [],
+        },
+        analysisResult.decisionBlocks,
+        ideas,
+      );
+
+      assert.equal(strayIdea.valid, false);
+
+      return 'placement may only point at block and idea ids that exist';
+    },
+  },
+  {
+    id: 'placement-cannot-select-a-forbidden-direction-idea',
+    run: () => {
+      const forbidden = analysisResult.normalizedIdeas.find((idea) =>
+        conflictsWithForbiddenDirection(idea));
+
+      assert(forbidden, 'fixture must contain a forbidden-direction idea');
+
+      const block = analysisResult.decisionBlocks[0];
+      const validation = validateIdeaPlacementResult(
+        {
+          placements: [{
+            ideaId: forbidden!.id,
+            blockId: block.id,
+            optionType: 'selected',
+            demotesOptionId: block.selectedOptionId,
+          }],
+          newBlocks: [],
+        },
+        analysisResult.decisionBlocks,
+        [forbidden!],
+      );
+
+      assert.equal(validation.valid, false);
+      assert(
+        !validation.valid && validation.errors.some((error) => error.includes('forbidden direction')),
+        'the forbidden-direction judgement made during normalization must not be overturned here',
+      );
+
+      return 'the placement call cannot promote a forbidden-direction idea to the selected option';
+    },
+  },
+  {
+    id: 'placement-selecting-must-name-the-demoted-option',
+    run: () => {
+      const idea = placeableIdeas(1)[0];
+      const block = analysisResult.decisionBlocks[0];
+      const missing = validateIdeaPlacementResult(
+        {
+          placements: [{ ideaId: idea.id, blockId: block.id, optionType: 'selected' }],
+          newBlocks: [],
+        },
+        analysisResult.decisionBlocks,
+        [idea],
+      );
+
+      assert.equal(missing.valid, false, 'replacing a selection without naming the loser is ambiguous');
+
+      const named = validateIdeaPlacementResult(
+        {
+          placements: [{
+            ideaId: idea.id,
+            blockId: block.id,
+            optionType: 'selected',
+            demotesOptionId: block.selectedOptionId,
+          }],
+          newBlocks: [],
+        },
+        analysisResult.decisionBlocks,
+        [idea],
+      );
+
+      assert(named.valid, "naming the demoted option must be accepted");
+
+      const applied = applyIdeaPlacements(analysisResult, named.result, [idea]);
+      const target = applied.decisionBlocks.find((entry) => entry.id === block.id)!;
+      const demoted = target.options.find((option) => option.id === block.selectedOptionId)!;
+
+      assert.equal(demoted.optionType, 'alternative', 'the named option must step down');
+      assert.notEqual(target.selectedOptionId, block.selectedOptionId, 'the selection must move');
+      assert.equal(
+        target.options.filter((option) => option.optionType === 'selected').length,
+        1,
+        'exactly one selected option survives',
+      );
+      assert.equal(validatePlanMergeAnalysis(analysisPayload, applied).valid, true);
+
+      return 'a placement that replaces a selection must say which option steps down, and the swap stays valid';
+    },
+  },
+  {
+    id: 'placement-new-block-needs-exactly-one-selected',
+    run: () => {
+      const ideas = placeableIdeas(2);
+
+      for (const optionTypes of [['alternative', 'alternative'], ['selected', 'selected']]) {
+        const validation = validateIdeaPlacementResult(
+          {
+            placements: [],
+            newBlocks: [{
+              sectionKey: 'mvp_scope',
+              topic: '초기 기능 범위',
+              selectionReason: '프로젝트 목표 기준으로 정했습니다.',
+              confidence: 0.7,
+              ideas: ideas.map((idea, index) => ({
+                ideaId: idea.id,
+                optionType: optionTypes[index],
+              })),
+            }],
+          },
+          analysisResult.decisionBlocks,
+          ideas,
+        );
+
+        assert.equal(validation.valid, false, `${optionTypes.join('+')} must be rejected`);
+      }
+
+      return 'a new decision block without exactly one selected option is not a decision';
+    },
+  },
+  {
+    id: 'placement-must-place-every-idea',
+    run: () => {
+      const ideas = placeableIdeas(2);
+      const validation = validateIdeaPlacementResult(
+        {
+          placements: [{
+            ideaId: ideas[0].id,
+            blockId: analysisResult.decisionBlocks[0].id,
+            optionType: 'alternative',
+          }],
+          newBlocks: [],
+        },
+        analysisResult.decisionBlocks,
+        ideas,
+      );
+
+      assert.equal(validation.valid, false);
+      assert(
+        !validation.valid && validation.errors.some((error) => error.includes('were not placed')),
+        'a silently dropped idea is the failure this call exists to prevent',
+      );
+
+      return 'every idea handed to the placement call must come back placed';
+    },
+  },
+  {
+    id: 'placement-judges-conflict-and-the-server-only-derives',
+    run: () => {
+      const idea = placeableIdeas(1)[0];
+      const block = analysisResult.decisionBlocks.find((entry) => entry.conflictLevel === 'none')
+        ?? analysisResult.decisionBlocks[0];
+      const validation = validateIdeaPlacementResult(
+        {
+          placements: [{
+            ideaId: idea.id,
+            blockId: block.id,
+            optionType: 'conflict',
+            severity: 'high',
+            // 길이는 검사하지 않는다. 짧은 문장이라고 사실이 아닌 게 아니다.
+            differenceFromSelected: '반대',
+          }],
+          newBlocks: [],
+        },
+        analysisResult.decisionBlocks,
+        [idea],
+      );
+
+      assert(validation.valid, 'short prose is not a forgery');
+
+      const applied = applyIdeaPlacements(analysisResult, validation.result, [idea]);
+      const target = applied.decisionBlocks.find((entry) => entry.id === block.id)!;
+
+      // 서버가 하는 일은 파생뿐이다: 라벨에서 conflictLevel을 유도하고 검토를 켠다.
+      assert.equal(target.conflictLevel, 'high');
+      assert.equal(target.needsHumanReview, true);
+      assert.equal(target.selectedOptionId, block.selectedOptionId, 'the existing choice is untouched');
+      assert(
+        applied.warnings.some((warning) => warning.includes('배치 판정 호출로 반영')),
+        'the extra call must be on the record',
+      );
+      assert.equal(validatePlanMergeAnalysis(analysisPayload, applied).valid, true);
+
+      return 'the model judges the conflict; the server only derives conflictLevel and the review flag';
+    },
+  },
+  {
+    id: 'placement-requires-severity-for-a-conflict',
+    run: () => {
+      const idea = placeableIdeas(1)[0];
+      const validation = validateIdeaPlacementResult(
+        {
+          placements: [{
+            ideaId: idea.id,
+            blockId: analysisResult.decisionBlocks[0].id,
+            optionType: 'conflict',
+          }],
+          newBlocks: [],
+        },
+        analysisResult.decisionBlocks,
+        [idea],
+      );
+
+      assert.equal(validation.valid, false, 'conflictLevel is derived from severity, so it cannot be absent');
+
+      return 'a conflict without severity leaves conflictLevel underivable';
     },
   },
 ];

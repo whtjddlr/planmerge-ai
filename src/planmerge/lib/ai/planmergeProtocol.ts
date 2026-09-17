@@ -1101,28 +1101,27 @@ export function validatePlanMergeAnalysis(
 }
 
 /**
- * 서버가 대신 써도 되는 아이디어의 상한(비율).
+ * 배치 판정 호출로 메울 수 있는 누락의 상한(비율).
  *
- * `ensureDecisionBlockCoverage`는 모델이 실수로 빠뜨린 아이디어 몇 개를 줍는 장치다.
- * 그 규모에서는 타당하다 — 검증된 아이디어를 원래 섹션에 되돌려 놓는 일이니까.
+ * merge가 아이디어 몇 개를 빠뜨리는 건 흔하다. 실측(루나 7회)에서 깨끗한 실행조차
+ * 20개 중 2개를 인용하지 않았다. 그 규모는 `buildIdeaPlacementPrompt`로 모델에
+ * 되물어 메운다 — 입력이 작아 merge를 다시 돌리는 것보다 훨씬 싸다.
  *
- * 문제는 모델이 크게 어긋났을 때다. 실측(루나 merge 7회)에서 모델이 스스로
- * "모든 sourceIdeaIds 연결을 제거했다"는 경고를 쓴 응답이 3회 나왔고, 그러면 아이디어
- * 전부가 "인용 안 됨"이 되어 서버가 문서 전체를 아이디어 1개 = 블록 1개로 재건했다.
- * 결과는 블록 23개, 전부 옵션 1개, **충돌 0** — 서로 다른 의견을 한자리에 놓는 일을
- * 아무도 하지 않았는데 `200`이 나갔다. Quality Gate도 이건 못 잡는다. 충돌 0은
- * "이견이 없었다"와 구분되지 않기 때문이다.
+ * 하지만 누락이 절반을 넘으면 그건 몇 개 빠진 게 아니라 **merge가 실패한 것**이다.
+ * 실측에서 모델이 스스로 "모든 sourceIdeaIds 연결을 제거했다"는 경고를 쓴 응답이
+ * 3회 나왔다. 그때 아이디어 전부를 배치 판정으로 메우면 merge를 배치 호출로
+ * 대신하는 셈이고, 그 호출은 블록 요약만 보기 때문에 전체 구조를 볼 수 없다.
+ * 그런 응답은 repair 프롬프트로 다시 만들게 하고, 그것도 실패하면 `502`다(규칙 4).
  *
- * 서버는 canonical 데이터와 파생값만 만든다. "어떤 의견들이 한 결정인가"와 "무엇이
- * 충돌인가"는 유동적 판단이라 `Math.min`과 문자열 템플릿으로 대신할 수 없다. 이 선을
- * 넘는 규모면 결과가 아니라 실패다 — repair 프롬프트로 모델에 돌려주고, 그것도
- * 안 되면 `502`로 사람에게 넘긴다(규칙 4).
+ * 이 상한이 없을 때 서버가 룰로 배치했고, 결과는 블록 20~24개가 전부 옵션 1개,
+ * **충돌 0**이었다. 스키마는 완벽해서 검증기가 통과시키고 Quality Gate도 못 잡는다 —
+ * 충돌 0은 "이견이 없었다"와 구분되지 않는다.
  */
-export const SERVER_AUTHORED_IDEA_LIMIT = 0.5;
+export const PLACEMENT_RECOVERABLE_IDEA_LIMIT = 0.5;
 
-/** 서버가 Decision Block을 대신 쓴 분량이 상한을 넘었는가. */
-export function exceedsServerAuthoredLimit(serverAuthoredIdeaCount: number, ideaCount: number): boolean {
-  return ideaCount > 0 && serverAuthoredIdeaCount > ideaCount * SERVER_AUTHORED_IDEA_LIMIT;
+/** 누락 규모가 배치 판정으로 메울 수 있는 선을 넘었는가. */
+export function exceedsPlacementRecoveryLimit(unplacedIdeaCount: number, ideaCount: number): boolean {
+  return ideaCount > 0 && unplacedIdeaCount > ideaCount * PLACEMENT_RECOVERABLE_IDEA_LIMIT;
 }
 
 /**
