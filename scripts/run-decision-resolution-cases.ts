@@ -1577,6 +1577,69 @@ const cases: Array<{ id: string; run: () => string }> = [
       return 'a 502 names why it failed with a server-controlled code, and the screen turns that into a next step';
     },
   },
+  {
+    id: 'collapsed-merge-is-caught-by-section-coherence',
+    run: () => {
+      // 기준선: 하네스 결과는 아이디어를 자기 섹션의 블록에 둔다.
+      const baseline = evaluateAnalysisQuality(analysisPayload, analysisResult);
+      const baselineMetric = baseline.metrics.find((entry) => entry.id === 'section_coherence');
+
+      assert(baselineMetric, 'the metric must exist');
+      assert.equal(baselineMetric!.score, 100);
+      assert(!baseline.findings.some((finding) => finding.id === 'section_mismatch'));
+
+      // 실측 재현: 아이디어 전부를 mvp_scope 블록 하나의 선택안에 밀어 넣는다. 스키마는 멀쩡하다.
+      const ideas = analysisResult.normalizedIdeas;
+      const collapsed = {
+        ...analysisResult,
+        decisionBlocks: [{
+          id: 'decision_collapsed',
+          sectionKey: 'mvp_scope' as const,
+          topic: 'MVP 범위와 운영 방식',
+          selectedOptionId: 'option_all',
+          selectionReason: '프로젝트 목표와 6주 검증 가능성을 기준으로 범위를 정했습니다.',
+          selectionSource: 'merge' as const,
+          confidence: 0.8,
+          conflictLevel: 'none' as const,
+          needsHumanReview: false,
+          options: [{
+            id: 'option_all',
+            optionType: 'selected' as const,
+            content: '모든 의견을 반영한 MVP 범위.',
+            sourceIdeaIds: ideas.map((idea) => idea.id),
+          }],
+        }],
+        finalDocumentSections: [{
+          sectionKey: 'mvp_scope' as const,
+          title: 'MVP 범위',
+          content: '모든 의견을 반영한 MVP 범위를 정리한 본문입니다.',
+          sourceDecisionBlockIds: ['decision_collapsed'],
+          composedFrom: [{ decisionBlockId: 'decision_collapsed', selectedOptionId: 'option_all' }],
+        }],
+        missingSections: documentSectionDefinitions
+          .map((section) => section.key)
+          .filter((key) => key !== 'mvp_scope'),
+      };
+
+      assert.equal(
+        validatePlanMergeAnalysis(analysisPayload, collapsed).valid,
+        true,
+        'the collapse passes structural validation — that is exactly why the gate must catch it',
+      );
+
+      const report = evaluateAnalysisQuality(analysisPayload, collapsed);
+      const metricValue = report.metrics.find((entry) => entry.id === 'section_coherence');
+      const mismatch = report.findings.find((finding) => finding.id === 'section_mismatch');
+
+      assert(metricValue && metricValue.score < 50, `coherence must drop, got ${metricValue?.score}`);
+      assert(mismatch, 'the mismatch finding must name the problem');
+      assert.match(mismatch!.detail, /MVP 범위와 운영 방식/);
+      assert.notEqual(report.level, 'ready');
+      assert(report.score <= 60, `score must be capped, got ${report.score}`);
+
+      return 'a merge that folds every section into one block is caught by citing ideas outside their section';
+    },
+  },
 ];
 
 const summaries: CaseSummary[] = cases.map(({ id, run }) => {

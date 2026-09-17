@@ -154,6 +154,39 @@ export function evaluateAnalysisQuality(
     (idea) => !hasForbiddenDirectionJudgement(idea),
   );
 
+  // 옵션이 인용한 아이디어가 정규화 단계에서 받은 섹션과, 그 옵션이 놓인 블록의 섹션이
+  // 같은가. 다르면 병합이 여러 섹션의 의견을 한 블록으로 뭉갠 것이다. 실측(복구 경로)에서
+  // 아이디어 24개가 블록 3개로 접혔고 성공 지표·리스크·요구사항이 전부 "MVP 범위"에
+  // 들어갔는데, 스키마는 완벽했고 게이트는 review/68로만 내렸다. 정규화 모델이 붙인
+  // 섹션과 병합 모델이 놓은 섹션을 대조하는 것은 판단이 아니라 사실 확인이다.
+  const citationCoherence = result.decisionBlocks.reduce(
+    (acc, block) => {
+      block.options.forEach((option) => {
+        option.sourceIdeaIds.forEach((ideaId) => {
+          const idea = ideasById.get(ideaId);
+
+          if (!idea) {
+            return;
+          }
+
+          acc.total += 1;
+
+          if (idea.sectionKey === block.sectionKey) {
+            acc.coherent += 1;
+          } else {
+            acc.mismatchedByBlock.set(block.id, (acc.mismatchedByBlock.get(block.id) ?? 0) + 1);
+          }
+        });
+      });
+
+      return acc;
+    },
+    { total: 0, coherent: 0, mismatchedByBlock: new Map<string, number>() },
+  );
+  const sectionCoherenceRatio = citationCoherence.total > 0
+    ? citationCoherence.coherent / citationCoherence.total
+    : 1;
+
   const decisionOptions = result.decisionBlocks.flatMap((block) => block.options);
   const optionsWithSources = decisionOptions.filter((option) => option.sourceIdeaIds.length > 0);
   const blocksWithSelectedOption = result.decisionBlocks.filter((block) =>
@@ -225,6 +258,13 @@ export function evaluateAnalysisQuality(
       // 한 건이라도 위반이면 즉시 blocked가 되도록 임계값을 올린다.
       100,
     ),
+    metric(
+      'section_coherence',
+      'Section Coherence',
+      citationCoherence.coherent,
+      Math.max(citationCoherence.total, 1),
+      '옵션이 인용한 아이디어가 정규화 단계에서 받은 섹션과 같은 섹션의 결정에 놓였는지 봅니다. 낮으면 병합이 여러 섹션의 의견을 한 블록으로 뭉갠 것입니다.',
+    ),
   ];
 
   if (ideasMissingJudgement.length) {
@@ -292,6 +332,24 @@ export function evaluateAnalysisQuality(
     });
   }
 
+  if (citationCoherence.total > 0 && sectionCoherenceRatio < 0.8) {
+    const worst = [...citationCoherence.mismatchedByBlock.entries()]
+      .sort((left, right) => right[1] - left[1])
+      .slice(0, 3)
+      .map(([blockId, count]) => {
+        const block = result.decisionBlocks.find((entry) => entry.id === blockId);
+
+        return `${block?.topic ?? blockId}(${count}건)`;
+      });
+
+    findings.push({
+      id: 'section_mismatch',
+      severity: 'review',
+      title: '다른 섹션의 아이디어를 인용한 결정',
+      detail: `인용 ${citationCoherence.total}건 중 ${citationCoherence.total - citationCoherence.coherent}건이 아이디어의 섹션과 다른 결정에 놓였습니다: ${worst.join(', ')}. 병합이 여러 섹션의 의견을 한 블록으로 뭉갠 것일 수 있으니 다시 분석하거나 블록을 확인해 주세요.`,
+    });
+  }
+
   conflictBlocks.forEach((block) => {
     findings.push({
       id: `conflict_${block.id}`,
@@ -355,6 +413,12 @@ export function evaluateAnalysisQuality(
 
     if (sourceDraftsUsed < payload.drafts.length) {
       score = Math.min(score, 74);
+      level = minLevel(levelFromScore(score), 'review');
+    }
+
+    // 인용의 절반 이상이 엉뚱한 섹션의 결정에 있으면 문서 구조가 뭉개진 것이다.
+    if (citationCoherence.total > 0 && sectionCoherenceRatio < 0.5) {
+      score = Math.min(score, 60);
       level = minLevel(levelFromScore(score), 'review');
     }
   }

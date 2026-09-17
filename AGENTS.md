@@ -24,7 +24,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 |---|---|---|
 | `npm ci` | 의존성 설치 | `postinstall`에서 `prisma generate` 자동 실행 |
 | `npm run lint` | ESLint | |
-| `npm run harness:quality` | **품질 회귀 게이트** (품질 12 + 결정 47 케이스) | 오프라인. 모델 호출 없음. 실패 시 exit 1 |
+| `npm run harness:quality` | **품질 회귀 게이트** (품질 12 + 결정 48 케이스) | 오프라인. 모델 호출 없음. 실패 시 exit 1 |
 | `npm run harness:local` | 로컬 하네스 단건 실행 + 프롬프트 미리보기 | 오프라인 |
 | `npm run build` | `next build` | `OPENAI_API_KEY`/`GMS_API_KEY`/`DATABASE_URL` 없어도 성공해야 함 |
 | `npm run dev` | 개발 서버 | |
@@ -41,7 +41,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 ## 아키텍처 지도
 
 - `src/planmerge/lib/ai/planmergeProtocol.ts` — **시스템의 심장이자 배럴.** 한 파일이 1,800줄이 되어 역할별로 나눴고, 이 경로는 전부 re-export한다. 호출자 26곳은 바뀌지 않았다. 내부 헬퍼(`protocolInternals.ts`)는 배럴이 내보내지 않는다.
-  - `protocolTypes.ts` — v0.4 타입, 섹션 정의 12개, `MAX_ANALYSIS_DRAFT_COUNT`
+  - `protocolTypes.ts` — v0.4 타입, 섹션 정의 12개, `MAX_ANALYSIS_DRAFT_COUNT`. **12개 섹션은 서비스 기획서 형태이고 `documentType`은 분석 프롬프트 어디에도 들어가지 않는다**(클러스터링 페이로드에만 실린다). `prd`/`business_plan`/`feature_spec`을 골라도 같은 12섹션으로 병합된다 — 문서 타입별 섹션 체계는 아직 없는 기능이지 미검증 기능이 아니다.
   - `protocolValidation.ts` — 수기 검증기 3종(`parsePlanMergeAnalysisPayload`, `validateDraftNormalizeResult`, `validatePlanMergeAnalysis`)
   - `protocolPrompts.ts` — 프롬프트 빌더 4종(정규화·병합·구형 단일 분석·복구)
   - `protocolMigrations.ts` — 저장 결과 버전 올리기, 서버 소유 필드(`ensureServerOwnedEnvelope`, `ensureServerOwnedSelectionSource`), 본문 낡음 파생(`sectionIsStale`)
@@ -56,8 +56,8 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - `src/app/api/analysis-config/route.ts` — `GET` 서버 키 설정 여부, `POST` 사용자 키 검증 후 사용할 모델 반환.
 - `src/planmerge/components/AnalysisKeySetup.tsx` — 키 등록 배너(키 없을 때만) + 설정 화면의 관리 카드.
 - `src/planmerge/lib/ai/gmsServer.ts` — Responses API 클라이언트 (`callGmsJson`, `callResponsesJsonWithMetadata`). 모델이 거부하는 파라미터(`temperature` 등)를 400 응답에서 학습해 제거하고 재시도하며, 모델별로 캐시한다.
-- `src/planmerge/lib/analysisQuality.ts` — 품질 점수/게이트 (`ready ≥80 / review ≥55 / blocked`).
-- `src/planmerge/lib/ai/opinionClustering.ts` — 익명 의견 클러스터링 (프롬프트 + 검증). 실패 시 `502`.
+- `src/planmerge/lib/analysisQuality.ts` — 품질 점수/게이트 (`ready ≥80 / review ≥55 / blocked`). `section_coherence` 지표는 옵션이 인용한 아이디어의 섹션(정규화 모델이 붙임)과 블록의 섹션을 대조한다 — 실측에서 복구 경로가 아이디어 24개를 블록 3개로 접어 성공 지표·리스크·요구사항이 전부 "MVP 범위"에 들어갔는데 스키마는 완벽했고 게이트는 review/68이었다. 인용의 절반 이상이 엉뚱한 섹션이면 review로 내린다. 판단이 아니라 두 모델의 섹션 배정을 대조하는 사실 확인이다.
+- `src/planmerge/lib/ai/opinionClustering.ts` — 익명 의견 클러스터링 (프롬프트 + 검증). 실패 시 `502`. 실모델 검증(2026-09-17, luna, 15초): 합성 의견 6개(지지·질문·반대·인젝션·무관·요구)가 전부 정확히 한 번씩 배정됐고, 인젝션 문구는 "의견으로 보기 어려운 입력/neutral/low"로, 무관 요청은 별도 클러스터로 분리됐으며, 채팅 찬성 의견은 충돌 옵션에 연결됐다.
 - `src/planmerge/lib/localWorkspace.ts` — localStorage 워크스페이스 상태, 샘플 데이터, import 검증.
 - `src/server/` — Prisma 싱글턴(`db.ts`), Upstash/인메모리 fallback rate limit(`rateLimit.ts`), 공유 워크스페이스 집계(`sharedWorkspace.ts`).
 - `src/app/api/workspaces/**` — 스냅샷 공유/투표/의견/참여 집계 API.
@@ -158,6 +158,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - **프롬프트에 같은 데이터를 두 번 넣지 않는다.** merge 프롬프트는 `normalizedIdeas`를 딱 한 번 직렬화한다. 한때 두 번 들어가 있어 호출마다 3천 토큰(전체 입력의 22%)을 낭비했다. 프롬프트를 고칠 때 `JSON.stringify(normalizedIdeas)`가 몇 번 나오는지 센다.
 - 프롬프트 캐시는 기대하지 않는다. normalize 프롬프트는 호출당 약 1,050 토큰이고 공통 접두사는 약 690 토큰으로 OpenAI 캐시 최소치(1,024)에 미달한다. 실측 적중률 0%다. 캐시를 노려 프롬프트를 늘리지 않는다 — 미달이면 늘린 만큼 그냥 더 낸다.
 - 분석 1회의 모델 호출 수는 `초안 수(normalize) + 1(merge) + 배치 판정 0~1회 + 문서 작성 1회 + repair 0~1회`다. 실측(초안 7개): 11회, 입력 20,297 / 출력 12,005 토큰, 80초. 배치 판정과 문서 작성은 블록 요약만 입력으로 받아서 merge(13k)보다 훨씬 작다 — 누락 몇 개 때문에 merge를 다시 돌리는 것보다 싸기 때문에 나눠 둔 것이다.
+- 복구 프롬프트를 재연결만 허용하도록 바꾼 뒤 실측 5회(초안 7개, 2026-09-17): 200 4회 / 502 1회. "sourceIdeaIds 전부 제거" 실패는 **0건**(수정 전 약 9회 중 4건). 복구 경로 2회 중 1회는 아이디어 24개가 블록 3개로 접혔고(`section_coherence`로 잡는다), 502는 호출 한 건의 120초 타임아웃이었다(`reason: upstream_timeout`). n=5라 경향으로만 읽는다.
 - 분석 지연은 토큰 양이 아니라 배치 수가 결정한다. 기본 `NORMALIZE_CONCURRENCY`는 12이고 환경변수로 덮을 수 있다. 실측(초안 13개): 6 → 54초, 13 → 47초, 양쪽 모두 429 없음. **13%만 줄어드는 이유는 merge 호출 1건이 병렬화되지 않는 하한**이라서다 — 지연을 더 줄이려면 normalize 동시성이 아니라 merge 단계를 봐야 한다.
 
 ### Rate limit
