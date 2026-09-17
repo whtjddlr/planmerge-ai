@@ -14,6 +14,9 @@ type DocumentContentProps = {
   drafts: LocalDraftSubmission[];
   onSectionSelect: (sectionNumber: number) => void;
   project: ProjectSettings;
+  /** 결정이 바뀐 섹션의 본문을 모델이 다시 쓰게 한다. 공유 보기에서는 없다. */
+  onRecomposeSection?: (sectionKey: string) => void;
+  recomposingSectionKey?: string | null;
 };
 
 const documentTypeLabels: Record<ProjectSettings['documentType'], string> = {
@@ -30,6 +33,8 @@ export function DocumentContent({
   drafts,
   onSectionSelect,
   project,
+  onRecomposeSection,
+  recomposingSectionKey,
 }: DocumentContentProps) {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const activeSectionRef = useRef<HTMLDivElement | null>(null);
@@ -112,6 +117,13 @@ export function DocumentContent({
                 status={section.status}
                 active={activeSection === section.number}
                 onClick={() => onSectionSelect(section.number)}
+                stale={section.stale}
+                recomposing={Boolean(section.sectionKey) && recomposingSectionKey === section.sectionKey}
+                onRecompose={
+                  onRecomposeSection && section.sectionKey
+                    ? () => onRecomposeSection(section.sectionKey!)
+                    : undefined
+                }
               />
             </div>
           ))}

@@ -45,6 +45,8 @@ import type {
   ProjectSettings,
 } from './lib/localWorkspace';
 import { AnalysisFailureError, generatePlanMergeAnalysis } from './lib/ai/planmergeAnalysisClient';
+import { recomposeDocumentSection } from './lib/ai/documentCompositionClient';
+import { replaceDocumentSection } from './lib/ai/documentComposition';
 import type { AnalysisTokenUsage } from './lib/ai/planmergeAnalysisClient';
 import { AnalysisKeySetup, type AnalysisKeyStatus } from './components/AnalysisKeySetup';
 import {
@@ -113,6 +115,7 @@ export default function App() {
   const [sharedWorkspaceLink, setSharedWorkspaceLink] = useState<string | null>(null);
   const [ownedShareAccess, setOwnedShareAccess] = useState<SharedWorkspaceOwnerAccess | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [recomposingSectionKey, setRecomposingSectionKey] = useState<string | null>(null);
   const noticeTimeoutRef = useRef<number | null>(null);
   const workspaceImportInputRef = useRef<HTMLInputElement | null>(null);
   const workspaceRegistry = useSyncExternalStore(
@@ -846,7 +849,7 @@ export default function App() {
         ],
       };
     });
-    showNotice('선택안을 변경하고 최종 문서 섹션에 반영했습니다.');
+    showNotice('선택안을 변경했습니다. 섹션 본문은 "본문 다시 쓰기"로 갱신할 수 있습니다.');
   };
 
   const applyDecisionResolution = (result: DecisionResolutionResult) => {
@@ -911,6 +914,42 @@ export default function App() {
       };
     });
     showNotice('합의 패치를 적용했습니다. 변경 내용과 근거를 Decision Log에 기록했습니다.');
+  };
+
+  const recomposeSection = async (sectionKey: string) => {
+    if (sharedWorkspaceId) {
+      showNotice(SHARED_READ_ONLY_NOTICE);
+      return;
+    }
+
+    const analysisResult = workspaceState.analysisResult;
+
+    if (!analysisResult) {
+      showNotice('다시 쓸 분석 결과가 없습니다.');
+      return;
+    }
+
+    setRecomposingSectionKey(sectionKey);
+
+    try {
+      const section = await recomposeDocumentSection({
+        project: workspaceState.project,
+        drafts: workspaceState.drafts,
+        analysisResult,
+        sectionKey,
+      });
+
+      setWorkspaceState((current) => (
+        current.analysisResult
+          ? { ...current, analysisResult: replaceDocumentSection(current.analysisResult, section) }
+          : current
+      ));
+      showNotice('바뀐 결정을 기준으로 섹션 본문을 다시 썼습니다.');
+    } catch (error) {
+      showNotice(error instanceof AnalysisFailureError ? error.message : '섹션 본문을 다시 쓰지 못했습니다.');
+    } finally {
+      setRecomposingSectionKey(null);
+    }
   };
 
   const renderContent = () => {
@@ -994,6 +1033,8 @@ export default function App() {
           drafts={workspaceState.drafts}
           onSectionSelect={setActiveSection}
           project={workspaceState.project}
+          onRecomposeSection={sharedMode ? undefined : recomposeSection}
+          recomposingSectionKey={recomposingSectionKey}
         />
         {/* 워크스페이스 로드 전에 마운트하면 runId 0 기준의 빈 참여 상태가
             localStorage에 저장돼 기존 투표/의견을 덮어쓴다. */}

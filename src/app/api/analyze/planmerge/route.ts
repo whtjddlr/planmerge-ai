@@ -203,7 +203,7 @@ function normalizeDraftProtocolResult(
   const ids = new Set<string>();
 
   return {
-    protocolVersion: '0.3',
+    protocolVersion: '0.4',
     source: result.source,
     warnings: Array.isArray(result.warnings) ? result.warnings : [],
     normalizedIdeas: (Array.isArray(result.normalizedIdeas) ? result.normalizedIdeas : [])

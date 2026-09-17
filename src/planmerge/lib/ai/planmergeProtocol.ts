@@ -112,6 +112,17 @@ export type ProtocolFinalDocumentSection = {
   title: string;
   content: string;
   sourceDecisionBlockIds: string[];
+  /**
+   * 이 본문이 어떤 선택안을 보고 쓰였는가.
+   *
+   * 사람이 선택안을 바꾸거나 Decision Room이 결정을 고치면 본문은 이전 선택안을
+   * 기준으로 쓰인 상태로 남는다. 서버는 본문을 고쳐 쓰지 않는다(산문은 판단이고,
+   * 채택안 문장으로 덮어쓰면 같은 섹션의 다른 결정 내용이 사라진다). 대신 여기
+   * 기록과 현재 `selectedOptionId`를 비교해 "본문 갱신 필요"를 파생한다.
+   * v0.4에서 추가됐다. 없으면 알 수 없다는 뜻이며, 알 수 없는 것을 낡았다고
+   * 표시하지는 않는다.
+   */
+  composedFrom?: { decisionBlockId: string; selectedOptionId: string }[];
 };
 
 export type PlanMergeAnalysisPayload = {
@@ -120,14 +131,14 @@ export type PlanMergeAnalysisPayload = {
 };
 
 export type DraftNormalizeResult = {
-  protocolVersion: '0.3';
+  protocolVersion: '0.4';
   source: 'openai' | 'gms' | 'gemini' | 'solar' | 'local_harness';
   normalizedIdeas: NormalizedIdea[];
   warnings: string[];
 };
 
 export type PlanMergeAnalysisResult = {
-  protocolVersion: '0.3';
+  protocolVersion: '0.4';
   source: 'openai' | 'gms' | 'gemini' | 'solar' | 'local_harness';
   normalizedIdeas: NormalizedIdea[];
   decisionBlocks: ProtocolDecisionBlock[];
@@ -417,7 +428,7 @@ export function buildDraftNormalizePrompt(project: ProjectSettings, draft: Local
     '',
     'Return shape:',
     JSON.stringify({
-      protocolVersion: '0.3',
+      protocolVersion: '0.4',
       source: 'gms',
       normalizedIdeas: [
         {
@@ -515,7 +526,7 @@ export function buildMergeNormalizedIdeasPrompt(
     '',
     'Return shape:',
     JSON.stringify({
-      protocolVersion: '0.3',
+      protocolVersion: '0.4',
       source: 'gms',
       decisionBlocks: [
         {
@@ -591,7 +602,7 @@ export function buildPlanMergeAnalysisPrompt(payload: PlanMergeAnalysisPayload) 
     '',
     'Return shape:',
     JSON.stringify({
-      protocolVersion: '0.3',
+      protocolVersion: '0.4',
       source: 'gms',
       normalizedIdeas: [
         {
@@ -710,8 +721,8 @@ export function validateDraftNormalizeResult(
   const errors: string[] = [];
   const ids = new Set<string>();
 
-  if (result.protocolVersion !== '0.3') {
-    errors.push('protocolVersion must be 0.3');
+  if (result.protocolVersion !== '0.4') {
+    errors.push('protocolVersion must be 0.4');
   }
 
   result.normalizedIdeas.forEach((idea, index) => {
@@ -780,12 +791,55 @@ function forbiddenDirectionJudgementErrors(judgement: unknown, path: string) {
  * 버전이 오를 때마다 저장된 병합 결과를 버리면 사용자는 매번 다시 분석해야 한다.
  * 유도할 수 있는 정보는 유도하고, 날조해야 하는 정보만 포기한다.
  *
+ * - v0.3 → v0.4: 섹션마다 `composedFrom`을 현재 블록의 `selectedOptionId`에서
+ *   유도한다. 저장 시점에 본문과 선택안이 어긋나 있었는지는 알 수 없으므로
+ *   일치한다고 본다 — 그래야 이후의 변경부터 낡음을 잡을 수 있다.
  * - v0.2 → v0.3: `selectionSource`를 기존 `selectionReason` 접두사에서 유도하고
  *   접두사를 벗긴다. 파싱이 렌더 시점이 아니라 로드 1회로 옮겨간다.
  * - v0.1 → : `forbiddenDirectionConflict`는 의미 판정이라 유도할 수 없다.
  *   없는 판정을 만들어 넣는 대신 그대로 두어 검증에서 떨어지게 한다.
  */
 export function upgradeStoredAnalysisResult(value: unknown): unknown {
+  return upgradeV03ToV04(upgradeV02ToV03(value));
+}
+
+function upgradeV03ToV04(value: unknown): unknown {
+  if (
+    !isRecord(value)
+    || value.protocolVersion !== '0.3'
+    || !Array.isArray(value.decisionBlocks)
+    || !Array.isArray(value.finalDocumentSections)
+  ) {
+    return value;
+  }
+
+  const selectedByBlock = new Map<string, string>();
+
+  value.decisionBlocks.forEach((block) => {
+    if (isRecord(block) && typeof block.id === 'string' && typeof block.selectedOptionId === 'string') {
+      selectedByBlock.set(block.id, block.selectedOptionId);
+    }
+  });
+
+  return {
+    ...value,
+    protocolVersion: '0.4',
+    finalDocumentSections: value.finalDocumentSections.map((section) => {
+      if (!isRecord(section) || !Array.isArray(section.sourceDecisionBlockIds) || section.composedFrom !== undefined) {
+        return section;
+      }
+
+      return {
+        ...section,
+        composedFrom: section.sourceDecisionBlockIds
+          .filter((blockId): blockId is string => typeof blockId === 'string' && selectedByBlock.has(blockId))
+          .map((blockId) => ({ decisionBlockId: blockId, selectedOptionId: selectedByBlock.get(blockId)! })),
+      };
+    }),
+  };
+}
+
+function upgradeV02ToV03(value: unknown): unknown {
   if (!isRecord(value) || value.protocolVersion !== '0.2' || !Array.isArray(value.decisionBlocks)) {
     return value;
   }
@@ -816,6 +870,40 @@ export function upgradeStoredAnalysisResult(value: unknown): unknown {
       return { ...block, selectionSource: 'merge' satisfies DecisionSelectionSource };
     }),
   };
+}
+
+/** 섹션 본문을 쓸 때 어떤 선택안을 보고 썼는지 기록한다. */
+export function composedFromBlocks(blocks: ProtocolDecisionBlock[]) {
+  return blocks.map((block) => ({ decisionBlockId: block.id, selectedOptionId: block.selectedOptionId }));
+}
+
+/**
+ * 본문이 현재 결정과 어긋나 있는가.
+ *
+ * 기록된 선택안과 지금 선택안이 다르거나, 근거 블록인데 기록이 없으면 낡았다.
+ * `composedFrom` 자체가 없으면(v0.4 이전에 만들어져 마이그레이션도 거치지 않은
+ * 결과) 알 수 없는 것이고, 알 수 없는 것을 낡았다고 표시하지 않는다.
+ */
+export function sectionIsStale(
+  section: ProtocolFinalDocumentSection,
+  blocks: ProtocolDecisionBlock[],
+): boolean {
+  if (!section.composedFrom) {
+    return false;
+  }
+
+  const blocksById = new Map(blocks.map((block) => [block.id, block] as const));
+  const recorded = new Map(section.composedFrom.map((entry) => [entry.decisionBlockId, entry.selectedOptionId] as const));
+
+  return section.sourceDecisionBlockIds.some((blockId) => {
+    const block = blocksById.get(blockId);
+
+    if (!block) {
+      return false;
+    }
+
+    return recorded.get(blockId) !== block.selectedOptionId;
+  });
 }
 
 /**
@@ -875,8 +963,8 @@ export function validatePlanMergeAnalysis(
       .filter((id): id is string => typeof id === 'string'),
   );
 
-  if (result.protocolVersion !== '0.3') {
-    errors.push('protocolVersion must be 0.3');
+  if (result.protocolVersion !== '0.4') {
+    errors.push('protocolVersion must be 0.4');
   }
 
   if (
@@ -1071,6 +1159,29 @@ export function validatePlanMergeAnalysis(
         errors.push(`finalDocumentSections[${index}] has invalid sourceDecisionBlockId ${blockId}`);
       }
     });
+
+    const composedFrom = (section as { composedFrom?: unknown }).composedFrom;
+
+    if (composedFrom !== undefined) {
+      if (!Array.isArray(composedFrom)) {
+        errors.push(`finalDocumentSections[${index}].composedFrom must be an array`);
+      } else {
+        composedFrom.forEach((entry, entryIndex) => {
+          if (
+            !isRecord(entry)
+            || typeof entry.decisionBlockId !== 'string'
+            || typeof entry.selectedOptionId !== 'string'
+          ) {
+            errors.push(`finalDocumentSections[${index}].composedFrom[${entryIndex}] must name a decisionBlockId and selectedOptionId`);
+            return;
+          }
+
+          if (!section.sourceDecisionBlockIds.includes(entry.decisionBlockId)) {
+            errors.push(`finalDocumentSections[${index}].composedFrom[${entryIndex}] cites ${entry.decisionBlockId}, which is not a source of this section`);
+          }
+        });
+      }
+    }
   });
 
   const seenMissingSections = new Set<DocumentSectionKey>();
@@ -1502,6 +1613,7 @@ export function runLocalPlanMergeHarness(payload: PlanMergeAnalysisPayload): Pla
         title: section.title,
         content: selectedContents.join(' ') || '',
         sourceDecisionBlockIds: relatedBlocks.map((block) => block.id),
+        composedFrom: composedFromBlocks(relatedBlocks),
       };
     })
     .filter((section) => section.content);
@@ -1512,7 +1624,7 @@ export function runLocalPlanMergeHarness(payload: PlanMergeAnalysisPayload): Pla
     .filter((sectionKey) => !coveredSections.has(sectionKey));
 
   return {
-    protocolVersion: '0.3',
+    protocolVersion: '0.4',
     source: 'local_harness',
     normalizedIdeas,
     decisionBlocks,

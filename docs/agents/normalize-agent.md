@@ -30,7 +30,7 @@
 
 서버(`route.ts`의 `normalizeDraftProtocolResult`)는 다음을 보정한다: 중복/빈 id → 대체 id, 빈 excerpt → 초안 앞부분 180자, 잘못된 ideaType → 섹션 기반 추론, 잘못된 intent → 텍스트 키워드 추론, 범위 밖 confidence → 0.7.
 
-## 금지 방향 판정 (프로토콜 v0.3 필수)
+## 금지 방향 판정 (프로토콜 v0.4 필수)
 
 아이디어마다 `forbiddenDirectionConflict`를 반드시 채운다. 서버는 이 값을 **보정하지 않는다.** 누락하면 검증이 실패하고 요청 전체가 실패한다. 기본값으로 메우지 않는 이유는 `conflicts: false`가 기본값이 되면 금지 방향 제안이 조용히 선택안이 되기 때문이다.
 

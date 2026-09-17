@@ -8,9 +8,23 @@ interface DocumentSectionProps {
   status?: SectionStatus;
   active?: boolean;
   onClick?: () => void;
+  /** 결정이 바뀌었는데 본문은 이전 선택안 기준인가. */
+  stale?: boolean;
+  recomposing?: boolean;
+  onRecompose?: () => void;
 }
 
-export function DocumentSection({ number, title, content, status, active, onClick }: DocumentSectionProps) {
+export function DocumentSection({
+  number,
+  title,
+  content,
+  status,
+  active,
+  onClick,
+  stale,
+  recomposing,
+  onRecompose,
+}: DocumentSectionProps) {
   const getStatusText = () => {
     if (content) return null;
     switch (status) {
@@ -54,6 +68,28 @@ export function DocumentSection({ number, title, content, status, active, onClic
         <p className="text-sm text-gray-700 leading-relaxed">{content}</p>
       ) : (
         <p className="text-sm text-gray-400 italic">{getStatusText()}</p>
+      )}
+      {stale && (
+        <div
+          className="mt-3 flex flex-wrap items-center gap-2 text-xs text-amber-800"
+          data-testid={`document-section-${number}-stale`}
+        >
+          <StatusBadge variant="warning">본문 갱신 필요</StatusBadge>
+          <span>결정이 바뀌었지만 본문은 이전 선택안을 기준으로 쓰여 있습니다.</span>
+          {onRecompose && (
+            <button
+              type="button"
+              disabled={recomposing}
+              onClick={(event) => {
+                event.stopPropagation();
+                onRecompose();
+              }}
+              className="rounded border border-amber-300 bg-white px-2 py-0.5 text-amber-900 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {recomposing ? '다시 쓰는 중…' : '본문 다시 쓰기'}
+            </button>
+          )}
+        </div>
       )}
     </div>
   );

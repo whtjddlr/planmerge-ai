@@ -19,6 +19,7 @@ import {
   ensureOptionsCiteKnownIdeas,
   ensureServerOwnedSelectionSource,
   exceedsPlacementRecoveryLimit,
+  sectionIsStale,
   PLACEMENT_RECOVERABLE_IDEA_LIMIT,
   upgradeStoredAnalysisResult,
   runLocalPlanMergeHarness,
@@ -27,6 +28,7 @@ import {
 import {
   applyDocumentComposition,
   findInventedNumbers,
+  replaceDocumentSection,
   validateDocumentCompositionResult,
 } from '../src/planmerge/lib/ai/documentComposition';
 import {
@@ -652,7 +654,8 @@ const cases: Array<{ id: string; run: () => string }> = [
 
       const upgraded = upgradeStoredAnalysisResult(v02) as typeof analysisResult;
 
-      assert.equal(upgraded.protocolVersion, '0.3');
+      // 0.2 → 0.3 → 0.4 체인이 한 번에 돈다.
+      assert.equal(upgraded.protocolVersion, '0.4');
       assert.equal(upgraded.decisionBlocks[0].selectionSource, 'decision_room');
       assert.equal(
         upgraded.decisionBlocks[0].selectionReason,
@@ -1289,6 +1292,105 @@ const cases: Array<{ id: string; run: () => string }> = [
       );
 
       return 'the validator checks facts and references, never style or length';
+    },
+  },
+  {
+    id: 'option-override-leaves-the-body-and-marks-it-stale',
+    run: () => {
+      // 예전에는 옵션을 바꾸면 섹션 본문 전체가 그 옵션 문장 하나로 교체됐다.
+      assert(targetBlock, 'fixture must contain a block with alternatives');
+
+      const alternative = targetBlock!.options.find((option) => option.id !== targetBlock!.selectedOptionId)!;
+      const before = analysisResult.finalDocumentSections.find(
+        (section) => section.sectionKey === targetBlock!.sectionKey,
+      )!;
+
+      assert(before.composedFrom, 'the harness must record what the body was composed from');
+      assert.equal(sectionIsStale(before, analysisResult.decisionBlocks), false);
+
+      const overridden = applyDecisionOptionOverride(analysisResult, targetBlock!.id, alternative.id);
+      const after = overridden.finalDocumentSections.find(
+        (section) => section.sectionKey === targetBlock!.sectionKey,
+      )!;
+
+      assert.equal(after.content, before.content, 'the body must not be rewritten by a rule');
+      assert.equal(sectionIsStale(after, overridden.decisionBlocks), true, 'but it must be marked stale');
+      assert.equal(validatePlanMergeAnalysis(analysisPayload, overridden).valid, true);
+
+      return 'changing a selection leaves the prose alone and derives "needs rewrite" instead of overwriting it';
+    },
+  },
+  {
+    id: 'recomposed-section-clears-stale',
+    run: () => {
+      assert(targetBlock);
+
+      const alternative = targetBlock!.options.find((option) => option.id !== targetBlock!.selectedOptionId)!;
+      const overridden = applyDecisionOptionOverride(analysisResult, targetBlock!.id, alternative.id);
+      const blocks = overridden.decisionBlocks.filter((block) => block.sectionKey === targetBlock!.sectionKey);
+      const validation = validateDocumentCompositionResult(
+        {
+          sections: [{
+            sectionKey: targetBlock!.sectionKey,
+            content: '바뀐 결정을 기준으로 다시 쓴 본문입니다.',
+            sourceDecisionBlockIds: blocks.map((block) => block.id),
+          }],
+        },
+        blocks,
+        overridden.normalizedIdeas,
+        analysisPayload,
+      );
+
+      assert(validation.valid, 'a single-section composition must validate against that section\'s blocks');
+
+      const recomposed = replaceDocumentSection(overridden, validation.sections[0]);
+      const section = recomposed.finalDocumentSections.find(
+        (entry) => entry.sectionKey === targetBlock!.sectionKey,
+      )!;
+
+      assert.equal(sectionIsStale(section, recomposed.decisionBlocks), false);
+      assert.equal(validatePlanMergeAnalysis(analysisPayload, recomposed).valid, true);
+
+      return 'rewriting the section records the new selection, so the stale flag clears';
+    },
+  },
+  {
+    id: 'v03-results-gain-composedFrom-on-upgrade',
+    run: () => {
+      const legacy = {
+        ...analysisResult,
+        protocolVersion: '0.3',
+        finalDocumentSections: analysisResult.finalDocumentSections.map((section) => {
+          const { composedFrom: _dropped, ...rest } = section;
+          void _dropped;
+          return rest;
+        }),
+      };
+      const upgraded = upgradeStoredAnalysisResult(legacy) as typeof analysisResult;
+
+      assert.equal(upgraded.protocolVersion, '0.4');
+      upgraded.finalDocumentSections.forEach((section) => {
+        assert(section.composedFrom, `${section.sectionKey} must gain composedFrom`);
+        assert.equal(sectionIsStale(section, upgraded.decisionBlocks), false, 'derived records match the current selection');
+      });
+      assert.equal(validatePlanMergeAnalysis(analysisPayload, upgraded).valid, true);
+
+      return 'a stored v0.3 result is upgraded in place instead of being dropped';
+    },
+  },
+  {
+    id: 'stale-is-unknown-without-a-record',
+    run: () => {
+      const section = { ...analysisResult.finalDocumentSections[0] };
+      delete (section as { composedFrom?: unknown }).composedFrom;
+
+      assert.equal(
+        sectionIsStale(section, analysisResult.decisionBlocks),
+        false,
+        'no record means unknown, and unknown is not reported as stale',
+      );
+
+      return 'a section without a composition record is not alarmed on';
     },
   },
 ];

@@ -18,7 +18,7 @@
  * 2. **파생** — 섹션 제목은 정의된 이름을 쓴다. 모델이 섹션 이름을 바꾸면
  *    12개 섹션 체계가 흔들린다.
  */
-import { documentSectionDefinitions } from './planmergeProtocol';
+import { composedFromBlocks, documentSectionDefinitions } from './planmergeProtocol';
 import type {
   DocumentSectionKey,
   NormalizedIdea,
@@ -243,6 +243,11 @@ export function validateDocumentCompositionResult(
         title: documentSectionDefinitions.find((section) => section.key === sectionKey)?.title ?? sectionKey,
         content,
         sourceDecisionBlockIds,
+        // 어떤 선택안을 보고 썼는지 기록한다. 이후 사람이 선택안을 바꾸면 이 기록과
+        // 비교해 "본문 갱신 필요"가 파생된다.
+        composedFrom: composedFromBlocks(
+          sourceDecisionBlockIds.map((blockId) => blocksById.get(blockId)!),
+        ),
       });
     }
   });
@@ -260,6 +265,22 @@ export function validateDocumentCompositionResult(
   }
 
   return { valid: true, sections };
+}
+
+/** 섹션 하나만 바꿔 넣는다. "본문 다시 쓰기"가 쓴다. */
+export function replaceDocumentSection(
+  result: PlanMergeAnalysisResult,
+  section: ProtocolFinalDocumentSection,
+): PlanMergeAnalysisResult {
+  const exists = result.finalDocumentSections.some((entry) => entry.sectionKey === section.sectionKey);
+
+  return {
+    ...result,
+    finalDocumentSections: exists
+      ? result.finalDocumentSections.map((entry) => (entry.sectionKey === section.sectionKey ? section : entry))
+      : [...result.finalDocumentSections, section],
+    missingSections: result.missingSections.filter((sectionKey) => sectionKey !== section.sectionKey),
+  };
 }
 
 export function applyDocumentComposition(

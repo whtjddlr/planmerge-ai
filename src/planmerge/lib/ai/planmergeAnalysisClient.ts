@@ -129,7 +129,7 @@ export async function generatePlanMergeAnalysis(
   return { result, ...(usage ? { usage } : {}) };
 }
 
-async function createAnalysisFailure(response: Response) {
+export async function createAnalysisFailure(response: Response) {
   const errorPayload = await readErrorPayload(response);
   const errors = extractErrors(errorPayload);
   const serverCode = extractCode(errorPayload);

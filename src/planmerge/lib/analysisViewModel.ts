@@ -2,6 +2,7 @@ import type { DecisionSource, DecisionTrace, DocumentSectionData, SectionStatus 
 import type { LocalDraftSubmission } from './localWorkspace';
 import {
   documentSectionDefinitions,
+  sectionIsStale,
   type DecisionSelectionSource,
   type NormalizedIdea,
   type DocumentSectionKey,
@@ -49,6 +50,8 @@ export function createDocumentSectionsFromAnalysis(
         draftsById,
       ));
 
+    const stale = finalSection ? sectionIsStale(finalSection, decisionBlocks) : false;
+
     return {
       number: definition.sortOrder,
       sectionKey: definition.key,
@@ -58,6 +61,7 @@ export function createDocumentSectionsFromAnalysis(
       decisionTrace: decisionTraces[0],
       decisionTraces: decisionTraces.length ? decisionTraces : undefined,
       ...(violatesForbiddenDirection ? { violatesForbiddenDirection } : {}),
+      ...(stale ? { stale } : {}),
     };
   });
 }

@@ -97,7 +97,7 @@ function score(model: string, elapsed: number, raw: unknown, tokens: string): Sc
   // 서버가 하는 일을 그대로 흉내낸다: 아이디어를 붙이고 출처를 서버가 기록한다.
   const merged = ensureServerOwnedSelectionSource({
     ...(raw as PlanMergeAnalysisResult),
-    protocolVersion: '0.3',
+    protocolVersion: '0.4',
     source: 'openai',
     normalizedIdeas: ideas,
     warnings: Array.isArray((raw as PlanMergeAnalysisResult).warnings)

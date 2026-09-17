@@ -11,7 +11,7 @@
 동시에, **고치는 척하며 데이터를 지어내면 강등보다 나쁜 결과**가 된다.
 
 - 입력: 원본 payload(프로젝트 + 초안들) + 검증 실패한 결과 JSON + 검증 오류 목록.
-- 출력: 오류가 모두 수정된 프로토콜 v0.3 JSON. `normalizedIdeas`는 `forbiddenDirectionConflict`를 포함해 받은 그대로 보존한다.
+- 출력: 오류가 모두 수정된 프로토콜 v0.4 JSON(`decisionBlocks`·`warnings`만 — 문서 섹션은 별도 호출이 다시 쓴다, 규칙 0). `normalizedIdeas`는 `forbiddenDirectionConflict`를 포함해 받은 그대로 보존한다.
 - 너의 출력도 다시 `validatePlanMergeAnalysis`와 서버 보정을 통과해야 한다. 기회는 한 번뿐이다.
 
 ## 1. 규칙

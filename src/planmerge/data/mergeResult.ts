@@ -17,6 +17,11 @@ export type DocumentSectionData = {
    * "고른 것이 기준을 어긴 것"이다. Review Queue가 둘을 구분해 안내해야 한다.
    */
   violatesForbiddenDirection?: boolean;
+  /**
+   * 본문이 이전 선택안을 기준으로 쓰여 있어 갱신이 필요한가.
+   * `ProtocolFinalDocumentSection.composedFrom`과 현재 결정을 비교해 파생한다.
+   */
+  stale?: boolean;
 };
 
 export type DecisionSource = {
