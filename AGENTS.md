@@ -125,6 +125,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - 런타임은 `@prisma/adapter-neon`(serverless driver) 경유 — `src/server/db.ts`의 `getDb()` 싱글턴만 사용한다.
 - `DATABASE_URL`(pooled)은 런타임, `DIRECT_URL`(direct)은 Prisma CLI/db push용. `prisma.config.ts` 참고.
 - 스키마 변경은 마이그레이션 파일 없이 `npx prisma db push`로 적용하며, 새 컬럼을 쓰는 코드 배포 전에 운영 DB에 먼저 반영해야 한다.
+- **`prisma db push`는 DB URL이 있는 곳에서만 된다.** `prisma.config.ts`의 `dotenv/config`는 `.env`만 읽고 `.env.local`은 읽지 않는다. `vercel env pull`로 받은 `.vercel/.env.production.local`의 `DATABASE_URL`/`DIRECT_URL`은 `"[SENSITIVE]"`로 마스킹돼 내려온다 — 그 파일로는 접속이 안 된다. 운영 스키마 반영은 Neon 콘솔의 connection string을 `DIRECT_URL`로 직접 넘겨 실행한다. 2026-09-17 기준 운영 DB에는 트림 전 16개 테이블이 남아 있고, 트림은 삭제만 했으므로(추가·변경 줄 0) 코드는 그 상태에서도 돈다.
 - DB 미설정 환경이 정상 상태다: API는 `isDatabaseConfigured()`로 가드하고 503을 반환한다. 새 API도 같은 패턴을 지킨다.
 
 ### Auth
