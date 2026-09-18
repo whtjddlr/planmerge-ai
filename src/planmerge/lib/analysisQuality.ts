@@ -69,6 +69,25 @@ export type AnalysisQualityReport = {
   }[];
 };
 
+/**
+ * 기획서라고 부를 수 있는 최소 섹션 수.
+ *
+ * 12섹션을 다 채워야 `ready`라는 기준은 실무 입력에서 달성되지 않았다. 실측(초안 7개,
+ * 9회)에서 최종 문서는 매번 8~11섹션이었고 게이트는 늘 `review`였다 — 늘 노란불이면
+ * 게이트가 정보를 주지 않는다. 그런데 비어 있던 섹션들은 **초안에 그 내용이 없어서**
+ * 비었다. 없는 내용을 채우지 않는 것은 이 제품이 지키는 규칙이고(규칙 8), 결과의
+ * 결함이 아니다.
+ *
+ * 그래서 두 가지를 분리한다.
+ * - 초안이 다루지 않은 섹션 → 입력 범위 문제. 안내는 하고 등급은 내리지 않는다.
+ * - 아이디어가 있는데 문서에 없는 섹션 → **결과의 결함.** 등급을 내린다.
+ *
+ * 다만 채운 섹션이 너무 적으면 기획서가 아니라 메모다(초안 1개 24자로 1섹션을 채운
+ * 경우까지 `ready`가 되면 안 된다). 절반을 선으로 둔다. 문서 타입별 섹션 체계가
+ * 들어오면 이 숫자도 타입별로 가져가야 한다.
+ */
+const MIN_READY_SECTION_COUNT = 6;
+
 function levelFromScore(score: number): QualityLevel {
   if (score >= 80) {
     return 'ready';
@@ -187,6 +206,39 @@ export function evaluateAnalysisQuality(
     ? citationCoherence.coherent / citationCoherence.total
     : 1;
 
+  // 정규화 모델이 아이디어에 붙인 섹션이 "채울 수 있었던 섹션"이다. 초안에 내용이
+  // 없는 섹션은 애초에 채울 수 없었으므로 결과의 품질로 세지 않는다.
+  const sectionsWithIdeas = new Set(result.normalizedIdeas.map((idea) => idea.sectionKey));
+  const coverableSectionKeys = sectionKeys.filter((key) => sectionsWithIdeas.has(key));
+  const filledCoverableSectionKeys = coverableSectionKeys.filter((key) => finalSectionKeys.has(key));
+  const unfilledCoverableSectionKeys = coverableSectionKeys.filter((key) => !finalSectionKeys.has(key));
+  // 빈 섹션의 아이디어가 다른 섹션의 결정에 인용됐는가. 인용됐다면 의견은 문서에
+  // 남아 있고 섹션 제목만 빈 것이다 — 정규화 모델과 병합 모델의 섹션 배정이 다를
+  // 뿐이고, 병합 쪽이 더 맞을 수도 있다. 실측(f3)에서 "핵심 기능"의 실시간 채팅
+  // 아이디어가 "MVP 범위" 결정의 충돌 옵션으로 들어갔다. 이걸 결함으로 세면 아이디어
+  // 하나 때문에 게이트가 3/4회 노란불이 되고, 다시 "늘 노란불"로 돌아간다.
+  const citedIdeaIdsInBlocks = new Set(
+    result.decisionBlocks.flatMap((block) => block.options.flatMap((option) => option.sourceIdeaIds)),
+  );
+  const movedSectionKeys: DocumentSectionKey[] = [];
+  const droppedIdeaSectionKeys: DocumentSectionKey[] = [];
+
+  unfilledCoverableSectionKeys.forEach((key) => {
+    const ideas = result.normalizedIdeas.filter((idea) => idea.sectionKey === key);
+
+    if (ideas.every((idea) => citedIdeaIdsInBlocks.has(idea.id))) {
+      movedSectionKeys.push(key);
+      return;
+    }
+
+    droppedIdeaSectionKeys.push(key);
+  });
+  const inputGapSectionKeys = sectionKeys.filter(
+    (key) => !sectionsWithIdeas.has(key) && !finalSectionKeys.has(key),
+  );
+
+
+
   const decisionOptions = result.decisionBlocks.flatMap((block) => block.options);
   const optionsWithSources = decisionOptions.filter((option) => option.sourceIdeaIds.length > 0);
   const blocksWithSelectedOption = result.decisionBlocks.filter((block) =>
@@ -198,7 +250,6 @@ export function evaluateAnalysisQuality(
   const lowConfidenceBlocks = result.decisionBlocks.filter((block) => block.confidence < 0.65);
   const sourceDraftsUsed = [...ideasByDraft.values()].filter((count) => count > 0).length;
   const finalSectionsWithContent = result.finalDocumentSections.filter((section) => section.content.trim().length >= 20);
-  const missingSectionTitles = result.missingSections.map(sectionTitle);
   const inputDraftCount = payload.drafts.filter((draft) => draft.rawText.trim().length > 0).length;
   const hasAnalysisContent =
     result.normalizedIdeas.length > 0 &&
@@ -217,9 +268,9 @@ export function evaluateAnalysisQuality(
     metric(
       'section_coverage',
       'Section Coverage',
-      finalSectionKeys.size,
-      sectionKeys.length,
-      `기본 기획서 ${sectionKeys.length}개 섹션 중 최종 문서가 채운 비율입니다.`,
+      filledCoverableSectionKeys.length,
+      coverableSectionKeys.length,
+      `초안에 아이디어가 있는 ${coverableSectionKeys.length}개 섹션 중 최종 문서가 채운 비율입니다. 초안이 다루지 않은 섹션은 세지 않습니다.`,
     ),
     metric(
       'source_coverage',
@@ -323,12 +374,34 @@ export function evaluateAnalysisQuality(
     });
   }
 
-  if (result.missingSections.length > 0) {
+  if (droppedIdeaSectionKeys.length > 0) {
     findings.push({
-      id: 'missing_sections',
+      id: 'dropped_ideas',
       severity: 'review',
-      title: '누락 섹션 있음',
-      detail: `${missingSectionTitles.join(', ')} 섹션은 추가 작성이 필요합니다.`,
+      title: '어떤 결정에도 들어가지 않은 의견',
+      detail: `${droppedIdeaSectionKeys.map(sectionTitle).join(', ')} 섹션의 아이디어가 어떤 Decision Block에도 인용되지 않아 문서에서 빠졌습니다. 다시 분석해 주세요.`,
+    });
+  }
+
+  // 등급을 내리지 않는 안내다. 의견은 다른 섹션의 결정에 남아 있고, 어느 쪽 배정이
+  // 맞는지는 서버가 판단할 수 없다.
+  if (movedSectionKeys.length > 0) {
+    findings.push({
+      id: 'section_assignment_differs',
+      severity: 'ready',
+      title: '다른 섹션의 결정으로 묶인 의견',
+      detail: `${movedSectionKeys.map(sectionTitle).join(', ')} 섹션은 비어 있지만 그 의견들은 다른 섹션의 결정에 반영돼 있습니다. 정규화와 병합의 섹션 배정이 달랐을 뿐 의견이 사라진 것은 아닙니다.`,
+    });
+  }
+
+  // 등급을 내리지 않는 안내다. 초안이 다루지 않은 섹션을 비워 두는 것은 결과의 결함이
+  // 아니라 입력 범위 문제이고, 없는 내용을 채우면 그게 날조다.
+  if (inputGapSectionKeys.length > 0) {
+    findings.push({
+      id: 'input_gap_sections',
+      severity: 'ready',
+      title: '초안이 다루지 않은 섹션',
+      detail: `${inputGapSectionKeys.map(sectionTitle).join(', ')} 섹션은 제출된 초안에 해당 내용이 없어 비어 있습니다. 초안을 보강하면 채워집니다.`,
     });
   }
 
@@ -385,7 +458,6 @@ export function evaluateAnalysisQuality(
   const weightedScore = Math.round(
     metrics.reduce((sum, item) => sum + item.score, 0) / metrics.length,
   );
-  const sectionCoverageRatio = finalSectionKeys.size / sectionKeys.length;
   let score = weightedScore;
   let level = validation.valid ? levelFromScore(score) : 'blocked';
 
@@ -401,12 +473,16 @@ export function evaluateAnalysisQuality(
     score = Math.min(score, 45);
     level = 'blocked';
   } else {
-    if (result.missingSections.length > 0 || finalSectionKeys.size < sectionKeys.length) {
+    // 어떤 결정에도 인용되지 않은 의견이 있으면 결과의 결함이다. 섹션 배정이
+    // 다른 것(movedSectionKeys)은 결함이 아니므로 등급을 내리지 않는다.
+    if (droppedIdeaSectionKeys.length > 0) {
       score = Math.min(score, 79);
       level = minLevel(levelFromScore(score), 'review');
     }
 
-    if (sectionCoverageRatio < 0.5) {
+    // 채운 섹션이 너무 적으면 기획서가 아니라 메모다. 초안이 좁아서 그렇더라도
+    // "내보낼 준비가 됐다"고 말할 수는 없다.
+    if (finalSectionKeys.size < MIN_READY_SECTION_COUNT) {
       score = Math.min(score, 68);
       level = minLevel(levelFromScore(score), 'review');
     }
@@ -416,8 +492,10 @@ export function evaluateAnalysisQuality(
       level = minLevel(levelFromScore(score), 'review');
     }
 
-    // 인용의 절반 이상이 엉뚱한 섹션의 결정에 있으면 문서 구조가 뭉개진 것이다.
-    if (citationCoherence.total > 0 && sectionCoherenceRatio < 0.5) {
+    // 실측 9회에서 Coherence가 깨끗하게 갈렸다: 과잉 병합·복구 손상 실행은 30·33·62%,
+    // 건강한 실행은 81~92%. 그 사이 빈 구간에 선을 둔다. 0.5로 두면 62%인 실행이
+    // ready로 나가는데, 그건 인용 셋 중 하나가 엉뚱한 섹션의 결정에 있는 문서다.
+    if (citationCoherence.total > 0 && sectionCoherenceRatio < 0.7) {
       score = Math.min(score, 60);
       level = minLevel(levelFromScore(score), 'review');
     }
@@ -427,7 +505,8 @@ export function evaluateAnalysisQuality(
     conflictBlocks,
     finalSectionsWithContentCount: finalSectionsWithContent.length,
     lowConfidenceBlocks,
-    missingSectionTitles,
+    unfilledSectionTitles: droppedIdeaSectionKeys.map(sectionTitle),
+    inputGapSectionTitles: inputGapSectionKeys.map(sectionTitle),
     payloadDraftCount: payload.drafts.length,
     result,
     sourceDraftsUsed,
@@ -460,7 +539,8 @@ function buildNextActions({
   conflictBlocks,
   finalSectionsWithContentCount,
   lowConfidenceBlocks,
-  missingSectionTitles,
+  unfilledSectionTitles,
+  inputGapSectionTitles,
   payloadDraftCount,
   result,
   sourceDraftsUsed,
@@ -470,7 +550,8 @@ function buildNextActions({
   conflictBlocks: PlanMergeAnalysisResult['decisionBlocks'];
   finalSectionsWithContentCount: number;
   lowConfidenceBlocks: PlanMergeAnalysisResult['decisionBlocks'];
-  missingSectionTitles: string[];
+  unfilledSectionTitles: string[];
+  inputGapSectionTitles: string[];
   payloadDraftCount: number;
   result: PlanMergeAnalysisResult;
   sourceDraftsUsed: number;
@@ -557,13 +638,27 @@ function buildNextActions({
     });
   });
 
-  if (missingSectionTitles.length > 0) {
+  if (unfilledSectionTitles.length > 0) {
     actions.push({
-      id: 'fill_missing_sections',
+      id: 'recover_dropped_ideas',
+      priority: 'now',
+      title: '빠진 의견 복구',
+      detail: `${unfilledSectionTitles.slice(0, 5).join(', ')}${unfilledSectionTitles.length > 5 ? ' 외' : ''} 섹션의 아이디어가 어떤 결정에도 들어가지 않았습니다. 다시 분석하면 복구될 수 있습니다.`,
+      expectedImpact: 'Section Coverage 개선',
+      destination: {
+        tab: 'validation',
+        validationFocus: 'missing_sections',
+      },
+    });
+  }
+
+  if (inputGapSectionTitles.length > 0) {
+    actions.push({
+      id: 'cover_sections_with_drafts',
       priority: 'next',
-      title: '누락 섹션 보강',
-      detail: `${missingSectionTitles.length}개 섹션 누락: ${missingSectionTitles.slice(0, 5).join(', ')}${missingSectionTitles.length > 5 ? ' 외' : ''}. 추가 작성이 필요합니다.`,
-      expectedImpact: 'Section Coverage와 Document Completeness 개선',
+      title: '초안으로 섹션 범위 넓히기',
+      detail: `${inputGapSectionTitles.slice(0, 5).join(', ')}${inputGapSectionTitles.length > 5 ? ' 외' : ''} 섹션은 제출된 초안에 내용이 없습니다. 이 섹션을 다루는 초안을 추가해 주세요 — 없는 내용을 채우지는 않습니다.`,
+      expectedImpact: '기획서 범위 확대',
       destination: {
         tab: 'validation',
         validationFocus: 'missing_sections',

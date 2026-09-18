@@ -279,6 +279,51 @@ const cases: QualityCase[] = [
     },
   },
   {
+    id: 'input-gaps-do-not-block-readiness',
+    title: '초안이 다루지 않은 섹션은 등급을 내리지 않고, 아이디어가 있는 섹션만 센다.',
+    payload: payload([
+      draft('gap-problem', '문제는 팀원이 각자 AI로 만든 기획 초안을 사람이 직접 비교해 합쳐야 한다는 점이다.', {
+        taskTitle: '문제 정의',
+        aiModel: 'ChatGPT',
+      }),
+      draft('gap-target', '타깃 사용자는 여러 AI 도구를 함께 쓰는 3~6인 기획 팀이며 문서 합치기에 시간을 쓴다.', {
+        taskTitle: '타깃 사용자',
+        aiModel: 'Claude',
+      }),
+      draft('gap-solution', '솔루션은 선택안과 대안을 출처와 함께 Decision Block으로 남기는 병합 도구다.', {
+        taskTitle: '솔루션',
+        aiModel: 'Gemini',
+      }),
+      draft('gap-features', '핵심 기능은 초안 붙여넣기, 아이디어 정규화, 충돌 표시, 근거 추적 네 가지로 구성한다.', {
+        taskTitle: '핵심 기능',
+        aiModel: 'Cursor',
+      }),
+      draft('gap-scope', 'MVP 범위는 텍스트 붙여넣기와 병합 결과 조회까지로 제한해 초기 검증에 집중한다.', {
+        taskTitle: 'MVP 범위',
+        aiModel: 'ChatGPT',
+      }),
+      draft('gap-metrics', '성공 지표는 충돌 의견 발견 수와 최종 문서 수정 횟수 감소로 측정해 판단한다.', {
+        taskTitle: '성공 지표',
+        aiModel: 'Claude',
+      }),
+      draft('gap-risks', '리스크는 출처 없는 AI 판단을 사용자가 그대로 신뢰하는 상황이며 검토 로그로 줄인다.', {
+        taskTitle: '리스크',
+        aiModel: 'Gemini',
+      }),
+    ]),
+    expect: {
+      parse: 'valid',
+      level: 'ready',
+      minScore: 80,
+      minIdeas: 7,
+      minDecisionBlocks: 7,
+      minFinalSections: 6,
+      requireAllInputDraftsUsed: true,
+      // 12섹션을 다 채우지 못했지만 비어 있는 섹션은 초안이 다루지 않은 것들이다.
+      requireMissingSections: true,
+    },
+  },
+  {
     id: 'multi-model-source-coverage',
     title: '여러 AI 모델의 초안이 모두 출처로 반영되어야 한다.',
     payload: payload([

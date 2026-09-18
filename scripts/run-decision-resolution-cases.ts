@@ -1787,6 +1787,89 @@ const cases: Array<{ id: string; run: () => string }> = [
       return 'dropping one malformed block keeps the rest of the result usable, so repairs stay narrow';
     },
   },
+  {
+    id: 'a-section-moved-by-merge-is-not-a-defect',
+    run: () => {
+      // 실측(f3): "핵심 기능"의 아이디어가 "MVP 범위" 결정의 옵션으로 들어갔다.
+      // 의견은 문서에 남아 있으므로 등급을 내리지 않는다 — 아이디어 하나 때문에
+      // 게이트가 노란불이 되면 게이트가 정보를 주지 않는다.
+      const moved = analysisResult.normalizedIdeas.find((idea) => idea.sectionKey === 'core_features');
+
+      assert(moved, 'fixture must contain a core_features idea');
+
+      const host = analysisResult.decisionBlocks.find((block) => block.sectionKey === 'mvp_scope')!;
+      const relocated = {
+        ...analysisResult,
+        // core_features 블록과 섹션을 없애고, 그 아이디어를 mvp_scope 결정에 인용시킨다.
+        decisionBlocks: analysisResult.decisionBlocks
+          .filter((block) => block.sectionKey !== 'core_features')
+          .map((block) => (
+            block.id === host.id
+              ? {
+                ...block,
+                options: block.options.map((option) => (
+                  option.id === block.selectedOptionId
+                    ? { ...option, sourceIdeaIds: [...new Set([...option.sourceIdeaIds, moved!.id])] }
+                    : option
+                )),
+              }
+              : block
+          )),
+        finalDocumentSections: analysisResult.finalDocumentSections
+          .filter((section) => section.sectionKey !== 'core_features')
+          .map((section) => ({
+            ...section,
+            sourceDecisionBlockIds: section.sourceDecisionBlockIds.filter((blockId) => (
+              analysisResult.decisionBlocks.some(
+                (block) => block.id === blockId && block.sectionKey !== 'core_features',
+              )
+            )),
+            composedFrom: section.composedFrom?.filter((entry) => (
+              analysisResult.decisionBlocks.some(
+                (block) => block.id === entry.decisionBlockId && block.sectionKey !== 'core_features',
+              )
+            )),
+          }))
+          .filter((section) => section.sourceDecisionBlockIds.length > 0),
+        missingSections: [...analysisResult.missingSections, 'core_features' as const],
+      };
+
+      assert.equal(validatePlanMergeAnalysis(analysisPayload, relocated).valid, true);
+
+      const report = evaluateAnalysisQuality(analysisPayload, relocated);
+
+      assert(
+        report.findings.some((finding) => finding.id === 'section_assignment_differs'),
+        'the screen must say where those opinions went',
+      );
+      assert(
+        !report.findings.some((finding) => finding.id === 'dropped_ideas'),
+        'nothing was dropped, so it must not be reported as a loss',
+      );
+      assert.equal(report.level, 'ready', `a relocated section must not gate readiness, got ${report.level}`);
+
+      // 반대로 진짜 유실은 잡는다: 인용을 지우면 결함이다.
+      const dropped = {
+        ...relocated,
+        decisionBlocks: relocated.decisionBlocks.map((block) => ({
+          ...block,
+          options: block.options.map((option) => ({
+            ...option,
+            sourceIdeaIds: option.sourceIdeaIds.filter((ideaId) => ideaId !== moved!.id),
+          })),
+        })),
+      };
+      const droppedReport = evaluateAnalysisQuality(analysisPayload, dropped);
+
+      assert(
+        droppedReport.findings.some((finding) => finding.id === 'dropped_ideas'),
+        'an idea cited nowhere is a real defect',
+      );
+      assert.notEqual(droppedReport.level, 'ready');
+
+      return 'a section the merge folded elsewhere is reported, not penalized; an idea cited nowhere is penalized';
+    },
+  },
 ];
 
 const summaries: CaseSummary[] = cases.map(({ id, run }) => {
