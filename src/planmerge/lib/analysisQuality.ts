@@ -49,6 +49,17 @@ export type QualityAction = {
   destination?: QualityActionDestination;
 };
 
+/**
+ * 사용자가 무언가 해야 하는 finding인가.
+ *
+ * `severity: 'ready'`는 안내다 — "초안이 다루지 않은 섹션", "다른 섹션의 결정으로 묶인
+ * 의견"처럼 알아야 하지만 고칠 것은 없는 사실. 화면이 finding 개수를 그냥 세면 건강한
+ * 결과에도 경고 배지가 계속 켜지고, 그건 게이트가 늘 노란불이던 문제와 같다.
+ */
+export function isActionableFinding(finding: QualityFinding) {
+  return finding.severity !== 'ready';
+}
+
 export type AnalysisQualityReport = {
   score: number;
   level: QualityLevel;
@@ -78,9 +89,11 @@ export type AnalysisQualityReport = {
  * 비었다. 없는 내용을 채우지 않는 것은 이 제품이 지키는 규칙이고(규칙 8), 결과의
  * 결함이 아니다.
  *
- * 그래서 두 가지를 분리한다.
- * - 초안이 다루지 않은 섹션 → 입력 범위 문제. 안내는 하고 등급은 내리지 않는다.
- * - 아이디어가 있는데 문서에 없는 섹션 → **결과의 결함.** 등급을 내린다.
+ * 그래서 빈 섹션을 세 가지로 나눈다.
+ * - 초안이 다루지 않은 섹션 → 입력 범위 문제. 안내만 하고 등급은 내리지 않는다.
+ * - 의견이 다른 섹션의 결정에 들어간 섹션 → 배정 차이. 의견은 문서에 남아 있으므로
+ *   안내만 한다. 어느 배정이 맞는지는 서버가 판단할 수 없다.
+ * - 의견이 어떤 결정에도 인용되지 않은 섹션 → **결과의 결함.** 등급을 내린다.
  *
  * 다만 채운 섹션이 너무 적으면 기획서가 아니라 메모다(초안 1개 24자로 1섹션을 채운
  * 경우까지 `ready`가 되면 안 된다). 절반을 선으로 둔다. 문서 타입별 섹션 체계가

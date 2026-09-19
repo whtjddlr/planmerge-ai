@@ -56,7 +56,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - `src/app/api/analysis-config/route.ts` — `GET` 서버 키 설정 여부, `POST` 사용자 키 검증 후 사용할 모델 반환.
 - `src/planmerge/components/AnalysisKeySetup.tsx` — 키 등록 배너(키 없을 때만) + 설정 화면의 관리 카드.
 - `src/planmerge/lib/ai/gmsServer.ts` — Responses API 클라이언트 (`callGmsJson`, `callResponsesJsonWithMetadata`). 모델이 거부하는 파라미터(`temperature` 등)를 400 응답에서 학습해 제거하고 재시도하며, 모델별로 캐시한다.
-- `src/planmerge/lib/analysisQuality.ts` — 품질 점수/게이트 (`ready ≥80 / review ≥55 / blocked`). `section_coherence` 지표는 옵션이 인용한 아이디어의 섹션(정규화 모델이 붙임)과 블록의 섹션을 대조한다 — 실측에서 복구 경로가 아이디어 24개를 블록 3개로 접어 성공 지표·리스크·요구사항이 전부 "MVP 범위"에 들어갔는데 스키마는 완벽했고 게이트는 review/68이었다. 인용의 절반 이상이 엉뚱한 섹션이면 review로 내린다. 판단이 아니라 두 모델의 섹션 배정을 대조하는 사실 확인이다.
+- `src/planmerge/lib/analysisQuality.ts` — 품질 점수/게이트 (`ready ≥80 / review ≥55 / blocked`). `section_coherence` 지표는 옵션이 인용한 아이디어의 섹션(정규화 모델이 붙임)과 블록의 섹션을 대조한다 — 실측에서 복구 경로가 아이디어 24개를 블록 3개로 접어 성공 지표·리스크·요구사항이 전부 "MVP 범위"에 들어갔는데 스키마는 완벽했고 게이트는 review/68이었다. 인용의 20%가 넘게 엉뚱한 섹션이면 `section_mismatch`로 알리고, 30%가 넘으면 등급을 `review`로 내린다. 두 임계값이 다른 것은 의도다 — 내리기 전에 먼저 말한다. 판단이 아니라 두 모델의 섹션 배정을 대조하는 사실 확인이다.
 - `src/planmerge/lib/ai/opinionClustering.ts` — 익명 의견 클러스터링 (프롬프트 + 검증). 실패 시 `502`. 실모델 검증(2026-09-17, luna, 15초): 합성 의견 6개(지지·질문·반대·인젝션·무관·요구)가 전부 정확히 한 번씩 배정됐고, 인젝션 문구는 "의견으로 보기 어려운 입력/neutral/low"로, 무관 요청은 별도 클러스터로 분리됐으며, 채팅 찬성 의견은 충돌 옵션에 연결됐다.
 - `src/planmerge/lib/localWorkspace.ts` — localStorage 워크스페이스 상태, 샘플 데이터, import 검증.
 - `src/server/` — Prisma 싱글턴(`db.ts`), Upstash/인메모리 fallback rate limit(`rateLimit.ts`), 공유 워크스페이스 집계(`sharedWorkspace.ts`).
@@ -106,19 +106,20 @@ This version has breaking changes — APIs, conventions, and file structure may 
 9. **금지 방향 위반은 Quality Gate를 차단한다.** `analysisQuality.ts`는 선택안의 근거 아이디어가 `forbiddenDirectionConflict.conflicts`인 블록을 세어 `forbidden_direction_compliance` 메트릭과 `blocked` finding을 만들고, 등급을 스키마 오류와 같은 하드 블록으로 내린다. 평균에 희석되게 두면 12개 중 1건 위반이 100점 Ready로 나온다(실제로 그랬다).
    - 사람이 충돌 의견을 선택안으로 덮어쓰는 것은 정당한 권한이지만 위반을 해소하지는 않는다. `applyDecisionOptionOverride`는 충돌 옵션을 선택하면 `needsHumanReview`를 유지한다.
    - 차단 문구는 실제 사유를 말한다. "구조 오류 또는 근거 부족"으로 뭉뚱그리면 사용자가 엉뚱한 곳을 고치러 간다.
-10. **섹션이 비어 있는 이유를 구분한다.** 게이트는 빈 섹션을 세 가지로 나눈다 — 의견이 어떤 결정에도 인용되지 않은 경우(`dropped_ideas`, **결함**, 등급 내림), 의견이 다른 섹션의 결정에 들어간 경우(`section_assignment_differs`, 안내만), 초안이 그 섹션을 다루지 않은 경우(`input_gap_sections`, 안내만). `section_coverage`의 분모도 12가 아니라 **아이디어가 있는 섹션 수**다. 예전에는 12섹션을 다 채워야 `ready`였고, 실측 9회에서 최종 문서가 매번 8~11섹션이라 게이트가 늘 `review`였다 — 늘 노란불이면 게이트가 정보를 주지 않는다. 빈 섹션은 초안에 내용이 없어서 비었고, 없는 내용을 채우지 않는 것은 규칙 8이 요구하는 동작이다.
-    - 배정 차이를 결함으로 세면 안 된다. 실측(f3)에서 "핵심 기능"의 실시간 채팅 아이디어가 "MVP 범위" 결정의 충돌 옵션으로 들어갔는데, 의견은 문서에 남아 있고 섹션 제목만 비었다. 어느 배정이 맞는지는 서버가 판단할 수 없다. 이걸 결함으로 세면 아이디어 하나 때문에 게이트가 3/4회 노란불이 되어 원래 문제로 돌아간다. 배정 차이의 정도는 `section_coherence`가 점수로 재고, 심하면(50% 미만) 그쪽이 등급을 내린다.
+10. **안내와 조치 대상을 섞지 않는다.** `severity: 'ready'`인 finding은 알아야 하지만 고칠 것이 없는 사실이다(`input_gap_sections`, `section_assignment_differs`). 화면이 finding 개수를 그냥 세면 건강한 결과에도 경고 배지가 켜지므로, `isActionableFinding`으로 거르고 없으면 "조치 필요 없음"을 보여준다 — 게이트가 늘 노란불이던 문제와 같은 병이다.
+11. **섹션이 비어 있는 이유를 구분한다.** 게이트는 빈 섹션을 세 가지로 나눈다 — 의견이 어떤 결정에도 인용되지 않은 경우(`dropped_ideas`, **결함**, 등급 내림), 의견이 다른 섹션의 결정에 들어간 경우(`section_assignment_differs`, 안내만), 초안이 그 섹션을 다루지 않은 경우(`input_gap_sections`, 안내만). `section_coverage`의 분모도 12가 아니라 **아이디어가 있는 섹션 수**다. 예전에는 12섹션을 다 채워야 `ready`였고, 실측 9회에서 최종 문서가 매번 8~11섹션이라 게이트가 늘 `review`였다 — 늘 노란불이면 게이트가 정보를 주지 않는다. 빈 섹션은 초안에 내용이 없어서 비었고, 없는 내용을 채우지 않는 것은 규칙 8이 요구하는 동작이다.
+    - 배정 차이를 결함으로 세면 안 된다. 실측(f3)에서 "핵심 기능"의 실시간 채팅 아이디어가 "MVP 범위" 결정의 충돌 옵션으로 들어갔는데, 의견은 문서에 남아 있고 섹션 제목만 비었다. 어느 배정이 맞는지는 서버가 판단할 수 없다. 이걸 결함으로 세면 아이디어 하나 때문에 게이트가 3/4회 노란불이 되어 원래 문제로 돌아간다. 배정 차이의 정도는 `section_coherence`가 점수로 재고, 심하면(70% 미만) 그쪽이 등급을 내린다. 임계값 0.7은 실측 9회에서 나왔다 — 과잉 병합·복구 손상 실행이 30·33·62%, 건강한 실행이 81~92%로 갈렸고 그 사이가 비어 있다.
     - 다만 채운 섹션이 `MIN_READY_SECTION_COUNT`(6, 12의 절반) 미만이면 `review`로 내린다. 초안 1개 24자로 1섹션을 채운 결과까지 "내보낼 준비"가 되면 안 된다. 문서 타입별 섹션 체계가 들어오면 이 숫자도 타입별로 가져가야 한다.
-11. **`Evidence Quality`와 `Decision Blocked`는 다른 축이다.** 전자는 근거·구조가 건전한가, 후자는 사람이 결정할 게 남았는가다. 미해결 결정이 있어도 `ready`가 정상이며 `baseline-default`/`complete-12-sections` 케이스가 이를 고정한다. 한 번 이 둘을 합치려다 두 케이스를 깨뜨렸다 — 모순처럼 보여도 합치지 않는다.
-12. **누가 결정했는지는 `selectionSource`로만 읽는다.** `ProtocolDecisionBlock.selectionSource`(`merge`/`decision_room`/`human`)가 결정 주체를 들고 있다. **모델은 이 필드를 쓸 수 없다** — 병합 프롬프트 규칙 2a가 금지하고 `ensureServerOwnedSelectionSource`가 모델이 보낸 값을 `merge`로 덮는다.
+12. **`Evidence Quality`와 `Decision Blocked`는 다른 축이다.** 전자는 근거·구조가 건전한가, 후자는 사람이 결정할 게 남았는가다. 미해결 결정이 있어도 `ready`가 정상이며 `baseline-default`/`complete-12-sections` 케이스가 이를 고정한다. 한 번 이 둘을 합치려다 두 케이스를 깨뜨렸다 — 모순처럼 보여도 합치지 않는다.
+13. **누가 결정했는지는 `selectionSource`로만 읽는다.** `ProtocolDecisionBlock.selectionSource`(`merge`/`decision_room`/`human`)가 결정 주체를 들고 있다. **모델은 이 필드를 쓸 수 없다** — 병합 프롬프트 규칙 2a가 금지하고 `ensureServerOwnedSelectionSource`가 모델이 보낸 값을 `merge`로 덮는다.
    - v0.2까지는 이 정보가 `selectionReason` 산문의 접두사(`GPT-5.6 consensus:`, `사용자가 `)로 인코딩되고 렌더마다 문자열 매칭으로 복원됐다. 그래서 사용자 문구를 바꾸면 배지가 조용히 바뀌었고, 모델이 `selectionReason`을 `사용자가 `로 시작하면 사람 결정으로 표시됐다. 출처 추적 도구에서 출처를 위장할 수 있는 구멍이었다.
    - `selectionReason`은 사람이 읽는 산문으로만 둔다. 여기에 기계가 읽는 표식을 다시 넣지 않는다.
-13. **저장된 결과를 버릴 때는 이유를 말한다.** 프로토콜 버전이 오르면 이전 `analysisResult`는 검증에서 떨어진다. 세 로드 경로(localStorage·import·공유 스냅샷) 모두 `sanitizeAnalysisResult`를 거치므로 크래시는 없지만, 조용히 사라지면 사용자는 병합 결과가 왜 없어졌는지 알 수 없다. 로드 경고는 `LocalWorkspaceSession.warnings`로 올려 배너에 띄운다.
-14. **초안 상한은 `MAX_ANALYSIS_DRAFT_COUNT` 하나만 쓴다.** 서버 검증과 화면 안내가 갈라지면 저장은 되는데 분석에서 거절되는 상태가 생긴다.
-15. **토큰 사용량은 응답 헤더(`x-planmerge-usage`)로 보낸다.** 사용자 키로 돌아갈 수 있으므로 비용을 보여줘야 하지만, 전송 메타데이터를 분석 결과 스키마에 섞으면 프로토콜 버전을 올려야 한다.
+14. **저장된 결과를 버릴 때는 이유를 말한다.** 프로토콜 버전이 오르면 이전 `analysisResult`는 검증에서 떨어진다. 세 로드 경로(localStorage·import·공유 스냅샷) 모두 `sanitizeAnalysisResult`를 거치므로 크래시는 없지만, 조용히 사라지면 사용자는 병합 결과가 왜 없어졌는지 알 수 없다. 로드 경고는 `LocalWorkspaceSession.warnings`로 올려 배너에 띄운다.
+15. **초안 상한은 `MAX_ANALYSIS_DRAFT_COUNT` 하나만 쓴다.** 서버 검증과 화면 안내가 갈라지면 저장은 되는데 분석에서 거절되는 상태가 생긴다.
+16. **토큰 사용량은 응답 헤더(`x-planmerge-usage`)로 보낸다.** 사용자 키로 돌아갈 수 있으므로 비용을 보여줘야 하지만, 전송 메타데이터를 분석 결과 스키마에 섞으면 프로토콜 버전을 올려야 한다.
     - 클라이언트가 `Accept: application/x-ndjson`을 보내면 분석 라우트는 진행 이벤트를 스트리밍한다(`{type:'progress'|'result'|'error'}` 한 줄씩). 스트림이 시작되면 헤더와 상태 코드를 바꿀 수 없으므로 **사용량은 마지막 `result` 이벤트에, 실패는 같은 `{code, errors}` 형태의 `error` 이벤트에** 싣는다. JSON 경로(스크립트·스텁·curl)는 그대로다. 두 경로는 `runAnalysisPipeline` 하나를 부르므로 갈라질 수 없다.
     - 화면의 단계 표시는 **서버 이벤트에서만** 바뀐다. 이벤트가 없으면(JSON으로 답하는 서버) 전부 대기 표시다 — 시간이나 순서로 "진행 중"을 꾸며 내지 않는다(규칙 8).
-16. **금지 방향 판정은 모델이 한다.** `NormalizedIdea.forbiddenDirectionConflict`(`conflicts`/`reason`/`evidence`)는 정규화 단계에서 모델이 한 번 내린 판정이고, 병합·서버 복구·Decision Room 안전 게이트가 모두 이 값을 읽는다. 누락되면 검증이 실패해야 하며 기본값으로 메우지 않는다 — 기본값 `false`는 금지 방향 제안을 조용히 통과시킨다. `judgeForbiddenDirectionByKeywords`는 하네스 픽스처 전용이므로 제품 경로에서 호출하지 않는다.
+17. **금지 방향 판정은 모델이 한다.** `NormalizedIdea.forbiddenDirectionConflict`(`conflicts`/`reason`/`evidence`)는 정규화 단계에서 모델이 한 번 내린 판정이고, 병합·서버 복구·Decision Room 안전 게이트가 모두 이 값을 읽는다. 누락되면 검증이 실패해야 하며 기본값으로 메우지 않는다 — 기본값 `false`는 금지 방향 제안을 조용히 통과시킨다. `judgeForbiddenDirectionByKeywords`는 하네스 픽스처 전용이므로 제품 경로에서 호출하지 않는다.
 
 ## PR 전 체크리스트
 

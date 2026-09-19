@@ -5,7 +5,7 @@ import {
   documentSectionDefinitions,
   validatePlanMergeAnalysis,
 } from '../../lib/ai/planmergeProtocol';
-import { evaluateAnalysisQuality } from '../../lib/analysisQuality';
+import { evaluateAnalysisQuality, isActionableFinding } from '../../lib/analysisQuality';
 import type {
   AnalysisQualityReport,
   QualityAction,
@@ -251,6 +251,8 @@ function QualityGateTab({
   onOpenAction: (action: QualityAction) => void;
   qualityReport: AnalysisQualityReport;
 }) {
+  // 안내성 finding은 개수에서 뺀다. 넣으면 건강한 결과에도 경고 배지가 계속 켜진다.
+  const actionableFindingCount = qualityReport.findings.filter(isActionableFinding).length;
   const draftsById = useMemo(() => new Map(drafts.map((draft) => [draft.id, draft])), [drafts]);
 
   return (
@@ -319,8 +321,10 @@ function QualityGateTab({
         <div className="rounded-md border border-gray-200 p-4">
           <div className="mb-3 flex items-center justify-between">
             <h3 className="text-sm text-gray-900">Review Findings</h3>
-            <StatusBadge variant={qualityReport.findings.length ? 'warning' : 'success'}>
-              {qualityReport.findings.length}개
+            {/* 안내성 finding(severity 'ready')은 개수에 넣지 않는다. 넣으면 건강한
+                결과에도 경고 배지가 계속 켜진다. 목록에는 그대로 보인다. */}
+            <StatusBadge variant={actionableFindingCount ? 'warning' : 'success'}>
+              {actionableFindingCount ? `${actionableFindingCount}개` : '조치 필요 없음'}
             </StatusBadge>
           </div>
           {qualityReport.findings.length ? (

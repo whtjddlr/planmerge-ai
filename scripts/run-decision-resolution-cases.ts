@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { applyDecisionOptionOverride, applyDecisionResolutionProposal } from '../src/planmerge/lib/analysisOverride';
-import { evaluateAnalysisQuality } from '../src/planmerge/lib/analysisQuality';
+import { evaluateAnalysisQuality, isActionableFinding } from '../src/planmerge/lib/analysisQuality';
 import { createDocumentSectionsFromAnalysis } from '../src/planmerge/lib/analysisViewModel';
 import {
   buildDecisionResolutionPrompt,
@@ -1847,6 +1847,15 @@ const cases: Array<{ id: string; run: () => string }> = [
         'nothing was dropped, so it must not be reported as a loss',
       );
       assert.equal(report.level, 'ready', `a relocated section must not gate readiness, got ${report.level}`);
+
+      // 안내성 finding은 화면의 "조치 필요" 개수에 들어가면 안 된다. 들어가면 건강한
+      // 결과에도 경고 배지가 켜지고, 게이트가 늘 노란불이던 문제가 그대로 재현된다.
+      const moved2 = report.findings.find((finding) => finding.id === 'section_assignment_differs')!;
+      assert.equal(isActionableFinding(moved2), false, 'a relocated section is information, not a task');
+      assert(
+        report.findings.filter(isActionableFinding).every((finding) => finding.severity !== 'ready'),
+        'only non-ready findings count as actionable',
+      );
 
       // 반대로 진짜 유실은 잡는다: 인용을 지우면 결함이다.
       const dropped = {
