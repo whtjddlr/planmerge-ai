@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { applyDecisionOptionOverride, applyDecisionResolutionProposal } from '../src/planmerge/lib/analysisOverride';
 import { evaluateAnalysisQuality, isActionableFinding } from '../src/planmerge/lib/analysisQuality';
+import { hasConflictOption } from '../src/planmerge/lib/analysisViewModel';
 import { createDocumentSectionsFromAnalysis } from '../src/planmerge/lib/analysisViewModel';
 import {
   buildDecisionResolutionPrompt,
@@ -1877,6 +1878,52 @@ const cases: Array<{ id: string; run: () => string }> = [
       assert.notEqual(droppedReport.level, 'ready');
 
       return 'a section the merge folded elsewhere is reported, not penalized; an idea cited nowhere is penalized';
+    },
+  },
+  {
+    id: 'a-minor-divergence-is-not-a-conflict-on-screen',
+    run: () => {
+      // 병합 프롬프트는 "low = minor divergence"라고 정의한다. 대안 하나만 있어도
+      // conflictLevel이 low가 되는데, 화면이 그걸 "충돌"로 세면 이견을 부풀린다.
+      // 실측 픽스처에서 충돌 섹션 4개 중 2개는 충돌 의견이 0개였다.
+      const withConflict = analysisResult.decisionBlocks.find((block) => (
+        block.options.some((option) => option.optionType === 'conflict')
+      ));
+
+      assert(withConflict, 'fixture must contain a block with a conflict option');
+      assert.equal(hasConflictOption(withConflict!), true);
+
+      // 충돌 옵션을 대안으로 내리고 conflictLevel만 low로 남긴다. 모델이 "약간의
+      // 이견"이라고 말한 상태이고, 화면은 이걸 충돌로 세면 안 된다.
+      const demoted = {
+        ...withConflict!,
+        conflictLevel: 'low' as const,
+        options: withConflict!.options.map((option) => (
+          option.optionType === 'conflict'
+            ? { ...option, optionType: 'alternative' as const, severity: undefined }
+            : option
+        )),
+      };
+
+      assert.equal(hasConflictOption(demoted), false);
+
+      const nudged = {
+        ...analysisResult,
+        decisionBlocks: analysisResult.decisionBlocks.map((block) => (
+          block.id === withConflict!.id ? demoted : block
+        )),
+      };
+      const withAlternative = demoted;
+      // 같은 섹션을 두 상태로 비교한다: 원본(충돌 옵션 있음) vs 강등본(대안만).
+      const baseSections = createDocumentSectionsFromAnalysis(analysisResult, analysisPayload.drafts);
+      const nudgedSections = createDocumentSectionsFromAnalysis(nudged, analysisPayload.drafts);
+      const conflictSection = baseSections.find((section) => section.sectionKey === withConflict!.sectionKey)!;
+      const alternativeSection = nudgedSections.find((section) => section.sectionKey === withAlternative.sectionKey)!;
+
+      assert.equal(alternativeSection.status, 'review', 'a minor divergence is a review, not a conflict');
+      assert.equal(conflictSection.status, 'conflict', 'a real conflict option still reads as a conflict');
+
+      return 'only a real conflict option is called a conflict on screen; a mere alternative is a review';
     },
   },
 ];

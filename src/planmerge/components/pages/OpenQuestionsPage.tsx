@@ -150,7 +150,9 @@ function createReviewQueueItem(section: DocumentSectionData): ReviewQueueItem {
   return {
     sectionNumber: section.number,
     section: section.title,
-    topic: trace?.topic ?? '추가 작성 필요',
+    // trace가 없으면 이 섹션에 연결된 Decision Block이 없다는 뜻이다. 무엇이
+    // 필요한지 추측해 적지 않는다(규칙 8).
+    topic: trace?.topic ?? '연결된 결정 없음',
     category,
     status: queueStatusLabel(section),
     statusVariant: sectionStatusVariant(section.status),

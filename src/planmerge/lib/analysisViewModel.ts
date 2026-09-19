@@ -102,12 +102,24 @@ function sectionSelectsForbiddenDirection(
     });
 }
 
+/**
+ * 이 결정에 실제로 충돌 의견이 있는가.
+ *
+ * `conflictLevel`만으로는 알 수 없다. 병합 프롬프트는 "low = minor divergence"라고
+ * 정의하므로 대안 하나만 있어도 `low`가 붙는다. 그걸 "충돌"로 세면 화면이 이견을
+ * 부풀린다 — 실측 픽스처에서 충돌 섹션 4개 중 2개는 충돌 의견이 0개였고, 그 항목의
+ * 설명문은 이미 "선택안과 다른 방향의 의견이 있어"라고 더 약하게 말하고 있었다.
+ */
+export function hasConflictOption(block: ProtocolDecisionBlock) {
+  return block.options.some((option) => option.optionType === 'conflict');
+}
+
 function getSectionStatus(sectionKey: DocumentSectionKey, analysisResult: PlanMergeAnalysisResult): SectionStatus {
   const blocks = analysisResult.decisionBlocks.filter((block) => block.sectionKey === sectionKey);
 
   if (analysisResult.missingSections.includes(sectionKey)) return 'pending';
-  if (blocks.some((block) => block.conflictLevel !== 'none')) return 'conflict';
-  if (blocks.some((block) => block.needsHumanReview)) return 'review';
+  if (blocks.some(hasConflictOption)) return 'conflict';
+  if (blocks.some((block) => block.needsHumanReview || block.conflictLevel !== 'none')) return 'review';
   return 'completed';
 }
 
@@ -159,7 +171,9 @@ function createDecisionTraceFromBlock(
         : []),
     ],
     selectedContent: selectedOption?.content ?? '선택안이 없습니다.',
-    selectionReason: `[${sectionKey}] ${primaryBlock.selectionReason}`,
+    // 섹션 이름은 바로 위에 이미 표시된다. 여기에 sectionKey를 덧붙이면 사람이 읽는
+    // 산문에 기계 토큰이 섞인다 — selectionReason은 산문으로만 둔다(규칙 13).
+    selectionReason: primaryBlock.selectionReason,
     selectedSources,
     alternatives,
     conflicts,

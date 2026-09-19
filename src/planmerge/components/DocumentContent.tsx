@@ -4,6 +4,7 @@ import { StatusBadge } from './StatusBadge';
 import type { DocumentSectionData } from '../data/mergeResult';
 import type { LocalDraftSubmission, ProjectSettings } from '../lib/localWorkspace';
 import { evaluateAnalysisQuality } from '../lib/analysisQuality';
+import { hasConflictOption } from '../lib/analysisViewModel';
 import type { AnalysisQualityReport, QualityLevel, QualityMetric } from '../lib/analysisQuality';
 import type { PlanMergeAnalysisResult } from '../lib/ai/planmergeProtocol';
 
@@ -38,8 +39,10 @@ export function DocumentContent({
 }: DocumentContentProps) {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const activeSectionRef = useRef<HTMLDivElement | null>(null);
+  // 충돌은 충돌 의견이 실제로 있는 결정만 센다. conflictLevel 'low'는 대안 하나만
+  // 있어도 붙으므로 그것까지 세면 화면이 이견을 부풀린다.
   const conflictCount = analysisResult
-    ? analysisResult.decisionBlocks.filter((block) => block.conflictLevel !== 'none').length
+    ? analysisResult.decisionBlocks.filter(hasConflictOption).length
     : documentSections.filter((section) => section.status === 'conflict').length;
   const reviewCount = analysisResult
     ? analysisResult.decisionBlocks.filter((block) => block.needsHumanReview).length

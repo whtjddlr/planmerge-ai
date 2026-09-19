@@ -134,6 +134,8 @@ export const sampleProjectSettings: ProjectSettings = {
   outputStyle: 'B2B SaaS 의사결정 문서처럼 간결하고 검증 기준이 분명한 톤',
 };
 
+// 예시 초안은 **분석 전** 상태로 싣는다. 한때 'parsed'로 실려서, 불러오자마자 초안
+// 13개가 전부 "분석 완료"로 표시됐다 — 분석을 누르기도 전에 끝난 것처럼 보였다(규칙 8).
 export const sampleDrafts: LocalDraftSubmission[] = [
   {
     id: 'sample-draft-overview',
@@ -142,7 +144,7 @@ export const sampleDrafts: LocalDraftSubmission[] = [
     aiModel: 'ChatGPT',
     taskTitle: '서비스 개요',
     rawText: '서비스 개요: 회의록 기반 액션아이템 정리 SaaS는 회의 후 흩어지는 할 일, 담당자, 마감일을 한 화면에서 정리해 후속 실행률을 높이는 업무 도구다.',
-    status: 'parsed',
+    status: 'submitted',
     createdAtLabel: '샘플',
   },
   {
@@ -152,7 +154,7 @@ export const sampleDrafts: LocalDraftSubmission[] = [
     aiModel: 'Claude',
     taskTitle: '문제 정의',
     rawText: '문제 정의: 회의가 끝난 뒤 결정사항과 액션아이템이 회의록, 메신저, 개인 메모에 흩어져 누락된다. 특히 담당자와 마감일이 불명확하면 다음 회의에서 같은 논의를 반복한다.',
-    status: 'parsed',
+    status: 'submitted',
     createdAtLabel: '샘플',
   },
   {
@@ -162,7 +164,7 @@ export const sampleDrafts: LocalDraftSubmission[] = [
     aiModel: 'Gemini',
     taskTitle: '타깃 사용자',
     rawText: '타깃 사용자: 주 5회 이상 회의를 진행하는 5~30인 규모 스타트업 팀의 PM, 팀 리드, 오퍼레이션 매니저를 초기 고객으로 둔다.',
-    status: 'parsed',
+    status: 'submitted',
     createdAtLabel: '샘플',
   },
   {
@@ -172,7 +174,7 @@ export const sampleDrafts: LocalDraftSubmission[] = [
     aiModel: 'Other',
     taskTitle: '사용자 Pain Point',
     rawText: '사용자 Pain Point: 회의록을 다시 읽는 시간이 길고, 누가 무엇을 해야 하는지 확인하기 어렵다. 액션아이템을 별도 툴에 옮기는 반복 작업 때문에 실행 관리가 늦어진다.',
-    status: 'parsed',
+    status: 'submitted',
     createdAtLabel: '샘플',
   },
   {
@@ -182,7 +184,7 @@ export const sampleDrafts: LocalDraftSubmission[] = [
     aiModel: 'ChatGPT',
     taskTitle: '솔루션',
     rawText: '솔루션: 사용자가 회의록을 붙여넣으면 AI가 결정사항, 액션아이템, 담당자 후보, 마감일 후보를 추출하고 사용자가 확인한 뒤 공유 가능한 정리본으로 내보낸다.',
-    status: 'parsed',
+    status: 'submitted',
     createdAtLabel: '샘플',
   },
   {
@@ -192,7 +194,7 @@ export const sampleDrafts: LocalDraftSubmission[] = [
     aiModel: 'Cursor',
     taskTitle: '핵심 기능',
     rawText: '핵심 기능: 회의록 텍스트 붙여넣기, 액션아이템 자동 추출, 담당자/마감일 후보 표시, 사람 검토 체크, Markdown 내보내기, 추출 근거 문장 하이라이트가 필요하다.',
-    status: 'parsed',
+    status: 'submitted',
     createdAtLabel: '샘플',
   },
   {
@@ -202,7 +204,7 @@ export const sampleDrafts: LocalDraftSubmission[] = [
     aiModel: 'Claude',
     taskTitle: 'MVP 범위',
     rawText: 'MVP 범위: 4주 안에는 텍스트 붙여넣기, 액션아이템 추출, 담당자/마감일 확인, 결과 내보내기까지만 포함한다. 인증, 결제, 외부 연동은 검증 이후로 미룬다.',
-    status: 'parsed',
+    status: 'submitted',
     createdAtLabel: '샘플',
   },
   {
@@ -212,7 +214,7 @@ export const sampleDrafts: LocalDraftSubmission[] = [
     aiModel: 'Gemini',
     taskTitle: 'MVP 범위',
     rawText: 'MVP 범위: 고객 데모 설득력을 위해 Slack 연동과 Notion 연동까지 포함해야 한다. 회의 후 바로 쓰는 제품처럼 보이려면 외부 문서 도구 연동까지 필요하다.',
-    status: 'parsed',
+    status: 'submitted',
     createdAtLabel: '샘플',
   },
   {
@@ -222,7 +224,7 @@ export const sampleDrafts: LocalDraftSubmission[] = [
     aiModel: 'Claude',
     taskTitle: '사용자 플로우',
     rawText: '사용자 플로우: 프로젝트 생성 후 회의록 붙여넣기, AI 추출 실행, 액션아이템 후보 검토, 담당자/마감일 수정, 승인, Markdown 또는 CSV 내보내기 순서로 진행한다.',
-    status: 'parsed',
+    status: 'submitted',
     createdAtLabel: '샘플',
   },
   {
@@ -232,7 +234,7 @@ export const sampleDrafts: LocalDraftSubmission[] = [
     aiModel: 'Cursor',
     taskTitle: '요구사항',
     rawText: '요구사항: 모든 액션아이템은 원문 근거 문장과 연결되어야 한다. 담당자와 마감일은 AI가 확정하지 않고 후보로 표시해야 하며, 사용자가 승인한 항목만 최종 결과에 포함해야 한다.',
-    status: 'parsed',
+    status: 'submitted',
     createdAtLabel: '샘플',
   },
   {
@@ -242,7 +244,7 @@ export const sampleDrafts: LocalDraftSubmission[] = [
     aiModel: 'ChatGPT',
     taskTitle: '성공 지표',
     rawText: '성공 지표: 회의록 정리 시간이 50% 이상 줄어드는지, 추출된 액션아이템 중 사용자가 승인한 비율이 70% 이상인지, 다음 회의 전 완료율이 개선되는지 측정한다.',
-    status: 'parsed',
+    status: 'submitted',
     createdAtLabel: '샘플',
   },
   {
@@ -252,7 +254,7 @@ export const sampleDrafts: LocalDraftSubmission[] = [
     aiModel: 'Claude',
     taskTitle: '리스크',
     rawText: '리스크: AI가 회의록에 없는 담당자나 마감일을 확정하면 신뢰가 깨진다. 따라서 출처 문장 연결, 후보 표시, 사용자 승인 로그가 반드시 필요하다.',
-    status: 'parsed',
+    status: 'submitted',
     createdAtLabel: '샘플',
   },
   {
@@ -262,7 +264,7 @@ export const sampleDrafts: LocalDraftSubmission[] = [
     aiModel: 'Other',
     taskTitle: '미결정 사항',
     rawText: '미결정 사항: 초기 고객을 PM 조직으로 좁힐지, 세일즈/CS 팀까지 포함할지 논의가 필요하다. CSV 내보내기를 MVP에 넣을지도 고객 인터뷰 후 결정해야 한다.',
-    status: 'parsed',
+    status: 'submitted',
     createdAtLabel: '샘플',
   },
 ];
