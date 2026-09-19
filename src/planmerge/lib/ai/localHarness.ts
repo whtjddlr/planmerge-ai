@@ -5,7 +5,7 @@
  * 의미 판정을 못 하고, 그래서 픽스처를 만드는 데만 쓴다.
  */
 import type { LocalDraftSubmission } from '../localWorkspace';
-import { documentSectionDefinitions } from './protocolTypes';
+import { defaultSectionTitle, getDocumentSections } from './protocolTypes';
 import type {
   DocumentSectionKey,
   ForbiddenDirectionJudgement,
@@ -101,7 +101,9 @@ export function runLocalPlanMergeHarness(payload: PlanMergeAnalysisPayload): Pla
     .map((draft, index) => createLocalNormalizedIdea(payload.project.forbiddenDirection, draft, index));
 
   const decisionBlocks = createLocalDecisionBlocks(payload.project.forbiddenDirection, normalizedIdeas);
-  const finalDocumentSections = documentSectionDefinitions
+  // 하네스도 기획서 타입의 섹션 체계를 따른다. 풀 전체로 만들면 검증에서 떨어진다.
+  const schemeSections = getDocumentSections(payload.project.documentType);
+  const finalDocumentSections = schemeSections
     .map((section) => {
       const relatedBlocks = decisionBlocks.filter((block) => block.sectionKey === section.key);
       const selectedContents = relatedBlocks
@@ -119,7 +121,7 @@ export function runLocalPlanMergeHarness(payload: PlanMergeAnalysisPayload): Pla
     .filter((section) => section.content);
 
   const coveredSections = new Set(finalDocumentSections.map((section) => section.sectionKey));
-  const missingSections = documentSectionDefinitions
+  const missingSections = schemeSections
     .map((section) => section.key)
     .filter((sectionKey) => !coveredSections.has(sectionKey));
 
@@ -258,7 +260,7 @@ function inferTopic(sectionKey: DocumentSectionKey) {
     case 'core_features':
       return '핵심 기능 구성';
     default:
-      return documentSectionDefinitions.find((section) => section.key === sectionKey)?.title ?? '섹션 요약';
+      return defaultSectionTitle(sectionKey) || '섹션 요약';
   }
 }
 

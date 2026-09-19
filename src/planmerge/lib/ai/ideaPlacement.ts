@@ -25,7 +25,7 @@
  */
 import {
   conflictsWithForbiddenDirection,
-  documentSectionDefinitions,
+  getDocumentSections,
 } from './planmergeProtocol';
 import type {
   DocumentSectionKey,
@@ -49,10 +49,6 @@ const severities = new Set<NonNullable<ProtocolDecisionOption['severity']>>([
   'medium',
   'high',
 ]);
-const sectionKeys = new Set<DocumentSectionKey>(
-  documentSectionDefinitions.map((section) => section.key),
-);
-
 /** 기존 블록에 옵션 하나를 더 붙이는 판정. */
 export type ExistingBlockPlacement = {
   ideaId: string;
@@ -139,7 +135,7 @@ export function buildIdeaPlacementPrompt(
     '- low = minor divergence.',
     '',
     'Allowed section keys:',
-    JSON.stringify(documentSectionDefinitions.map((section) => section.key)),
+    JSON.stringify(getDocumentSections(payload.project.documentType)),
     '',
     'Existing decision blocks (summaries — place ideas into these when they fit):',
     JSON.stringify(blocks.map(summarizeBlock)),
@@ -203,6 +199,7 @@ export function validateIdeaPlacementResult(
   input: unknown,
   blocks: ProtocolDecisionBlock[],
   ideas: NormalizedIdea[],
+  payload: PlanMergeAnalysisPayload,
 ): IdeaPlacementValidation {
   const errors: string[] = [];
 
@@ -210,6 +207,10 @@ export function validateIdeaPlacementResult(
     return { valid: false, errors: ['placement result must be an object'] };
   }
 
+  // 새 블록의 sectionKey는 이 기획서 타입의 섹션이어야 한다.
+  const sectionKeys = new Set<DocumentSectionKey>(
+    getDocumentSections(payload.project.documentType).map((section) => section.key),
+  );
   const blocksById = new Map(blocks.map((block) => [block.id, block] as const));
   const ideasById = new Map(ideas.map((idea) => [idea.id, idea] as const));
   const seenIdeaIds = new Set<string>();

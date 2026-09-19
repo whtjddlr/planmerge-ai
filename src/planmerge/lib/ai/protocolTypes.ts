@@ -6,22 +6,138 @@
  */
 import type { LocalDraftSubmission, ProjectSettings } from '../localWorkspace';
 
+/**
+ * 섹션 키 풀 — 모든 기획서 타입이 쓰는 키의 전체 집합.
+ *
+ * 여기 있는 제목은 **기본값**이다. 실제 문서의 섹션 목록과 제목은 기획서 타입이
+ * 정한다(`documentSchemes`). 같은 키라도 PRD에서는 "출시 범위", 서비스 기획서에서는
+ * "MVP 범위"로 부른다 — 다루는 내용이 같아서 키를 나누지 않는다.
+ *
+ * 한때 이 목록 12개가 전부였고 `documentType`은 분석 어디에도 들어가지 않았다. PRD를
+ * 골라도 서비스 기획서용 12섹션으로 병합됐다 — 선택지가 있는데 아무 일도 하지 않는
+ * 화면이었다.
+ */
 export const documentSectionDefinitions = [
   { key: 'overview', title: '개요', sortOrder: 1 },
   { key: 'problem', title: '문제 정의', sortOrder: 2 },
-  { key: 'target_user', title: '타깃 사용자', sortOrder: 3 },
-  { key: 'pain_points', title: '사용자 Pain Point', sortOrder: 4 },
-  { key: 'solution', title: '솔루션', sortOrder: 5 },
-  { key: 'core_features', title: '핵심 기능', sortOrder: 6 },
-  { key: 'mvp_scope', title: 'MVP 범위', sortOrder: 7 },
-  { key: 'user_flow', title: '사용자 플로우', sortOrder: 8 },
-  { key: 'requirements', title: '요구사항', sortOrder: 9 },
-  { key: 'success_metrics', title: '성공 지표', sortOrder: 10 },
-  { key: 'risks', title: '리스크', sortOrder: 11 },
-  { key: 'open_questions', title: '미결정 사항', sortOrder: 12 },
+  { key: 'market', title: '시장·고객', sortOrder: 3 },
+  { key: 'target_user', title: '타깃 사용자', sortOrder: 4 },
+  { key: 'pain_points', title: '사용자 Pain Point', sortOrder: 5 },
+  { key: 'solution', title: '솔루션', sortOrder: 6 },
+  { key: 'competition', title: '경쟁·차별화', sortOrder: 7 },
+  { key: 'business_model', title: '수익 모델', sortOrder: 8 },
+  { key: 'go_to_market', title: '진입 전략', sortOrder: 9 },
+  { key: 'core_features', title: '핵심 기능', sortOrder: 10 },
+  { key: 'non_goals', title: '비목표', sortOrder: 11 },
+  { key: 'mvp_scope', title: 'MVP 범위', sortOrder: 12 },
+  { key: 'user_flow', title: '사용자 플로우', sortOrder: 13 },
+  { key: 'edge_cases', title: '엣지 케이스·오류', sortOrder: 14 },
+  { key: 'data_interface', title: '데이터·인터페이스', sortOrder: 15 },
+  { key: 'requirements', title: '요구사항', sortOrder: 16 },
+  { key: 'success_metrics', title: '성공 지표', sortOrder: 17 },
+  { key: 'team_ops', title: '운영·팀', sortOrder: 18 },
+  { key: 'milestones', title: '마일스톤', sortOrder: 19 },
+  { key: 'risks', title: '리스크', sortOrder: 20 },
+  { key: 'open_questions', title: '미결정 사항', sortOrder: 21 },
 ] as const;
 
 export type DocumentSectionKey = typeof documentSectionDefinitions[number]['key'];
+
+export type DocumentSectionDefinition = {
+  key: DocumentSectionKey;
+  title: string;
+  sortOrder: number;
+};
+
+/**
+ * 기획서 타입별 섹션 체계.
+ *
+ * 순서가 문서의 순서이고, 제목이 화면과 내보내기에 그대로 쓰인다. 키를 재사용하는
+ * 이유는 같은 내용을 다루기 때문이다 — PRD의 "출시 범위"와 서비스 기획서의 "MVP 범위"를
+ * 다른 키로 두면 정규화 모델이 둘을 구분할 근거가 없다.
+ */
+const documentSchemeDefinitions: Record<ProjectSettings['documentType'], { key: DocumentSectionKey; title: string }[]> = {
+  service_plan: [
+    { key: 'overview', title: '개요' },
+    { key: 'problem', title: '문제 정의' },
+    { key: 'target_user', title: '타깃 사용자' },
+    { key: 'pain_points', title: '사용자 Pain Point' },
+    { key: 'solution', title: '솔루션' },
+    { key: 'core_features', title: '핵심 기능' },
+    { key: 'mvp_scope', title: 'MVP 범위' },
+    { key: 'user_flow', title: '사용자 플로우' },
+    { key: 'requirements', title: '요구사항' },
+    { key: 'success_metrics', title: '성공 지표' },
+    { key: 'risks', title: '리스크' },
+    { key: 'open_questions', title: '미결정 사항' },
+  ],
+  prd: [
+    { key: 'overview', title: '배경과 목표' },
+    { key: 'non_goals', title: '비목표' },
+    { key: 'target_user', title: '사용자' },
+    { key: 'user_flow', title: '사용자 스토리' },
+    { key: 'core_features', title: '기능 요구사항' },
+    { key: 'requirements', title: '비기능 요구사항' },
+    { key: 'mvp_scope', title: '출시 범위' },
+    { key: 'success_metrics', title: '성공 지표' },
+    { key: 'risks', title: '리스크와 의존성' },
+    { key: 'open_questions', title: '미결정 사항' },
+  ],
+  business_plan: [
+    { key: 'overview', title: '요약' },
+    { key: 'problem', title: '문제와 기회' },
+    { key: 'market', title: '시장과 고객' },
+    { key: 'solution', title: '제품' },
+    { key: 'competition', title: '경쟁과 차별화' },
+    { key: 'business_model', title: '수익 모델' },
+    { key: 'go_to_market', title: '진입 전략' },
+    { key: 'team_ops', title: '운영과 팀' },
+    { key: 'success_metrics', title: '지표와 가정' },
+    { key: 'milestones', title: '마일스톤' },
+    { key: 'risks', title: '리스크' },
+    { key: 'open_questions', title: '미결정 사항' },
+  ],
+  feature_spec: [
+    { key: 'overview', title: '배경과 목적' },
+    { key: 'mvp_scope', title: '범위(포함·제외)' },
+    { key: 'non_goals', title: '비목표' },
+    { key: 'user_flow', title: '사용자 시나리오' },
+    { key: 'core_features', title: '상세 동작' },
+    { key: 'edge_cases', title: '엣지 케이스와 오류' },
+    { key: 'data_interface', title: '데이터와 인터페이스' },
+    { key: 'requirements', title: '요구사항' },
+    { key: 'success_metrics', title: '검증 방법' },
+    { key: 'risks', title: '리스크와 의존성' },
+    { key: 'open_questions', title: '미결정 사항' },
+  ],
+};
+
+const documentSchemes = Object.fromEntries(
+  Object.entries(documentSchemeDefinitions).map(([documentType, sections]) => [
+    documentType,
+    sections.map((section, index) => ({ ...section, sortOrder: index + 1 })),
+  ]),
+) as Record<ProjectSettings['documentType'], DocumentSectionDefinition[]>;
+
+/** 이 기획서 타입의 섹션 목록. 순서와 제목이 문서에 그대로 쓰인다. */
+export function getDocumentSections(
+  documentType: ProjectSettings['documentType'],
+): DocumentSectionDefinition[] {
+  return documentSchemes[documentType] ?? documentSchemes.service_plan;
+}
+
+/** 이 타입이 쓰는 섹션 키인가. 검증기는 풀 전체가 아니라 이것으로 본다. */
+export function isSectionKeyOfType(
+  documentType: ProjectSettings['documentType'],
+  sectionKey: unknown,
+): sectionKey is DocumentSectionKey {
+  return getDocumentSections(documentType).some((section) => section.key === sectionKey);
+}
+
+/** 풀 전체의 기본 제목. 타입을 모르는 자리(로그·마이그레이션)에서만 쓴다. */
+export function defaultSectionTitle(sectionKey: DocumentSectionKey) {
+  return documentSectionDefinitions.find((section) => section.key === sectionKey)?.title ?? sectionKey;
+}
 
 /**
  * 한 번에 분석할 수 있는 초안 수 상한.

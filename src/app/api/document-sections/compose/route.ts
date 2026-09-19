@@ -7,7 +7,7 @@ import {
 } from '@/planmerge/lib/ai/documentComposition';
 import { callGmsJson, getAnalysisConfig } from '@/planmerge/lib/ai/gmsServer';
 import {
-  documentSectionDefinitions,
+  isSectionKeyOfType,
   parsePlanMergeAnalysisPayload,
   validatePlanMergeAnalysis,
 } from '@/planmerge/lib/ai/planmergeProtocol';
@@ -21,7 +21,7 @@ const RATE_LIMIT = { limit: 10, windowMs: 60_000 };
 // 섹션 하나의 산문이라 분석 파이프라인의 문서 작성(16k)보다 훨씬 작다.
 const SECTION_MAX_OUTPUT_TOKENS = 4_000;
 
-const sectionKeys = new Set<DocumentSectionKey>(documentSectionDefinitions.map((section) => section.key));
+// 허용 섹션은 기획서 타입이 정한다. 요청마다 payload에서 읽는다.
 
 /**
  * 결정이 바뀐 섹션의 본문을 다시 쓴다.
@@ -64,7 +64,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ errors: parsedPayload.errors }, { status: 400 });
   }
 
-  const sectionKey = typeof body.sectionKey === 'string' && sectionKeys.has(body.sectionKey as DocumentSectionKey)
+  const sectionKey = typeof body.sectionKey === 'string'
+    && isSectionKeyOfType(parsedPayload.payload.project.documentType, body.sectionKey)
     ? (body.sectionKey as DocumentSectionKey)
     : undefined;
 

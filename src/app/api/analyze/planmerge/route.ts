@@ -5,7 +5,7 @@ import {
   MAX_ANALYSIS_DRAFT_COUNT,
   buildMergeNormalizedIdeasPrompt,
   buildPlanMergeRepairPrompt,
-  documentSectionDefinitions,
+  getDocumentSections,
   parsePlanMergeAnalysisPayload,
   ensureAssumptionBackedBlocksAreReviewed,
   ensureDecisionBlockShape,
@@ -223,7 +223,7 @@ async function normalizeDrafts(
         { maxOutputTokens: 4000, signal, config, onUsage },
       );
       const result = normalizeDraftProtocolResult(draft, rawResult);
-      const validation = validateDraftNormalizeResult(draft, result);
+      const validation = validateDraftNormalizeResult(draft, result, payload.project.documentType);
 
       if (!validation.valid) {
         throw new Error(`Normalize validation failed for ${draft.id}: ${validation.errors.join(', ')}`);
@@ -349,9 +349,14 @@ function ensureMergeUsesCanonicalIdeas(
   };
 }
 
-function ensureCanonicalMissingSections(result: PlanMergeAnalysisResult): PlanMergeAnalysisResult {
+function ensureCanonicalMissingSections(
+  payload: PlanMergeAnalysisPayload,
+  result: PlanMergeAnalysisResult,
+): PlanMergeAnalysisResult {
   const finalSectionKeys = new Set(result.finalDocumentSections.map((section) => section.sectionKey));
-  const missingSections = documentSectionDefinitions
+  // 누락 섹션도 이 기획서 타입의 체계에서 센다. 풀 전체로 세면 PRD인데 "사용자 Pain
+  // Point가 없다"고 말하게 된다.
+  const missingSections = getDocumentSections(payload.project.documentType)
     .map((section) => section.key)
     .filter((sectionKey) => !finalSectionKeys.has(sectionKey));
   const sameMissingSections =
@@ -501,8 +506,12 @@ function repairMergeShape(
 }
 
 /** 파생값과 canonical 복원만 남은 마무리. 문서 본문은 여기서 만들지 않는다. */
-function finalizeMergeResult(result: PlanMergeAnalysisResult): PlanMergeAnalysisResult {
+function finalizeMergeResult(
+  payload: PlanMergeAnalysisPayload,
+  result: PlanMergeAnalysisResult,
+): PlanMergeAnalysisResult {
   return ensureCanonicalMissingSections(
+    payload,
     ensureAssumptionBackedBlocksAreReviewed(result),
   );
 }
@@ -535,7 +544,7 @@ async function buildMergeResult(
   if (shaped.unplacedIdeas.length) {
     if (exceedsPlacementRecoveryLimit(shaped.unplacedIdeas.length, normalizedIdeas.length)) {
       return {
-        result: finalizeMergeResult(current),
+        result: finalizeMergeResult(payload, current),
         blockers: [
           `merge 응답이 ${normalizedIdeas.length}개 아이디어 중 ${shaped.unplacedIdeas.length}개를 어떤 옵션의 sourceIdeaIds에도 인용하지 않았습니다. `
           + '모든 아이디어를 인용하고, 같은 주제를 말하는 아이디어들은 하나의 Decision Block 안에 서로 다른 옵션으로 묶으십시오.',
@@ -557,13 +566,14 @@ async function buildMergeResult(
       placementRaw,
       current.decisionBlocks,
       shaped.unplacedIdeas,
+      payload,
     );
 
     // 검증이 실패하면 서버가 대신 배치하지 않는다. 문서 작성 호출도 내지 않고
     // repair로 보낸다 — 결정이 확정되지 않았는데 문서를 쓸 이유가 없다.
     if (!placement.valid) {
       return {
-        result: finalizeMergeResult(current),
+        result: finalizeMergeResult(payload, current),
         blockers: [
           `배치 판정이 검증을 통과하지 못했습니다(${shaped.unplacedIdeas.length}개 아이디어 미배치): ${placement.errors.slice(0, 3).join(', ')}`,
         ],
@@ -575,7 +585,7 @@ async function buildMergeResult(
   }
 
   if (!current.decisionBlocks.length) {
-    return { result: finalizeMergeResult(current), blockers: [] };
+    return { result: finalizeMergeResult(payload, current), blockers: [] };
   }
 
   return composeDocument(payload, current, options);
@@ -611,7 +621,7 @@ async function composeDocument(
 
   if (!composition.valid) {
     return {
-      result: finalizeMergeResult(result),
+      result: finalizeMergeResult(payload, result),
       blockers: [
         `문서 작성이 검증을 통과하지 못했습니다: ${composition.errors.slice(0, 3).join(', ')}`,
       ],
@@ -621,7 +631,7 @@ async function composeDocument(
   options.onStage({ stage: 'compose', status: 'done' });
 
   return {
-    result: finalizeMergeResult(applyDocumentComposition(result, composition.sections)),
+    result: finalizeMergeResult(payload, applyDocumentComposition(result, composition.sections)),
     blockers: [],
   };
 }

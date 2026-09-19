@@ -1,6 +1,7 @@
 import {
   hasForbiddenDirectionJudgement,
-  documentSectionDefinitions,
+  defaultSectionTitle,
+  getDocumentSections,
   validatePlanMergeAnalysis,
 } from './ai/planmergeProtocol';
 import type {
@@ -150,7 +151,14 @@ export function evaluateAnalysisQuality(
   result: PlanMergeAnalysisResult,
 ): AnalysisQualityReport {
   const validation = validatePlanMergeAnalysis(payload, result);
-  const sectionKeys = documentSectionDefinitions.map((section) => section.key);
+  // 섹션 체계는 기획서 타입이 정한다. 풀 전체로 세면 PRD인데 "사용자 Pain Point가
+  // 없다"고 말하게 된다.
+  const schemeSections = getDocumentSections(payload.project.documentType);
+  const sectionKeys = schemeSections.map((section) => section.key);
+  // 제목도 타입이 정한다. PRD에서는 같은 키가 "출시 범위"로 불린다.
+  const sectionTitle = (sectionKey: DocumentSectionKey) => (
+    schemeSections.find((section) => section.key === sectionKey)?.title ?? defaultSectionTitle(sectionKey)
+  );
   const finalSectionKeys = new Set(result.finalDocumentSections.map((section) => section.sectionKey));
   const ideasBySection = groupBySection(result.normalizedIdeas);
   const blocksBySection = groupBySection(result.decisionBlocks);
@@ -518,6 +526,7 @@ export function evaluateAnalysisQuality(
     conflictBlocks,
     finalSectionsWithContentCount: finalSectionsWithContent.length,
     lowConfidenceBlocks,
+    sectionTitle,
     unfilledSectionTitles: droppedIdeaSectionKeys.map(sectionTitle),
     inputGapSectionTitles: inputGapSectionKeys.map(sectionTitle),
     payloadDraftCount: payload.drafts.length,
@@ -538,7 +547,7 @@ export function evaluateAnalysisQuality(
       draftId,
       ideaCount,
     })),
-    sectionCoverage: documentSectionDefinitions.map((section) => ({
+    sectionCoverage: schemeSections.map((section) => ({
       sectionKey: section.key,
       title: section.title,
       hasFinalSection: finalSectionKeys.has(section.key),
@@ -552,6 +561,7 @@ function buildNextActions({
   conflictBlocks,
   finalSectionsWithContentCount,
   lowConfidenceBlocks,
+  sectionTitle,
   unfilledSectionTitles,
   inputGapSectionTitles,
   payloadDraftCount,
@@ -563,6 +573,7 @@ function buildNextActions({
   conflictBlocks: PlanMergeAnalysisResult['decisionBlocks'];
   finalSectionsWithContentCount: number;
   lowConfidenceBlocks: PlanMergeAnalysisResult['decisionBlocks'];
+  sectionTitle: (sectionKey: DocumentSectionKey) => string;
   unfilledSectionTitles: string[];
   inputGapSectionTitles: string[];
   payloadDraftCount: number;
@@ -742,10 +753,6 @@ function groupBySection<T extends { sectionKey: DocumentSectionKey }>(items: T[]
   });
 
   return result;
-}
-
-function sectionTitle(sectionKey: DocumentSectionKey) {
-  return documentSectionDefinitions.find((section) => section.key === sectionKey)?.title ?? sectionKey;
 }
 
 function sortByConflictLevel(blocks: PlanMergeAnalysisResult['decisionBlocks']) {

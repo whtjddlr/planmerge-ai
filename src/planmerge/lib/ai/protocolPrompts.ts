@@ -5,7 +5,7 @@
  * 완화하지 않는다(AGENTS.md 규칙 2). 같은 데이터를 두 번 직렬화하지 않는다.
  */
 import type { LocalDraftSubmission, ProjectSettings } from '../localWorkspace';
-import { documentSectionDefinitions } from './protocolTypes';
+import { getDocumentSections } from './protocolTypes';
 import type { NormalizedIdea, PlanMergeAnalysisPayload } from './protocolTypes';
 
 export function buildDraftNormalizePrompt(project: ProjectSettings, draft: LocalDraftSubmission) {
@@ -24,8 +24,9 @@ export function buildDraftNormalizePrompt(project: ProjectSettings, draft: Local
     '7. Judge every idea against project.forbiddenDirection and report it in forbiddenDirectionConflict.',
     '8. Return valid JSON only. Do not use Markdown.',
     '',
+    `Document type: ${project.documentType}. Use only this type's sections; the titles below are what the final document calls them.`,
     'Allowed section keys:',
-    JSON.stringify(documentSectionDefinitions),
+    JSON.stringify(getDocumentSections(project.documentType)),
     '',
     'Intent definitions:',
     '- propose = suggests a direction.',
@@ -116,8 +117,9 @@ export function buildMergeNormalizedIdeasPrompt(
     '8. If confidence is low or sources conflict, set needsHumanReview to true.',
     '9. Return valid JSON only. Do not use Markdown.',
     '',
+    `Document type: ${payload.project.documentType}. Use only this type's sections; the titles below are what the final document calls them.`,
     'Allowed section keys:',
-    JSON.stringify(documentSectionDefinitions),
+    JSON.stringify(getDocumentSections(payload.project.documentType)),
     '',
     'Judgment procedure:',
     '1. Each idea already carries forbiddenDirectionConflict, judged during normalization. Use that judgement; do not re-derive it from keywords.',
@@ -213,8 +215,9 @@ export function buildPlanMergeAnalysisPrompt(payload: PlanMergeAnalysisPayload) 
     '8. If confidence is low or sources conflict, set needsHumanReview to true.',
     '9. Return valid JSON only. Do not use Markdown.',
     '',
+    `Document type: ${payload.project.documentType}. Use only this type's sections.`,
     'Allowed section keys:',
-    JSON.stringify(documentSectionDefinitions),
+    JSON.stringify(getDocumentSections(payload.project.documentType)),
     '',
     'Merge judgment procedure:',
     '1. An idea conflicting with project.forbiddenDirection must NEVER be selected regardless of support count; mark it optionType "conflict" with severity. Ideas with intent "warn" are risk flags, not direction proposals, so do not treat them as forbidden-direction conflicts.',

@@ -5,7 +5,7 @@
  * 검증 규칙을 바꾸면 `run-planmerge-quality-cases.ts`에 케이스를 넣는다.
  */
 import type { LocalDraftSubmission, ProjectSettings } from '../localWorkspace';
-import { MAX_ANALYSIS_DRAFT_COUNT } from './protocolTypes';
+import { getDocumentSections, MAX_ANALYSIS_DRAFT_COUNT } from './protocolTypes';
 import type {
   DecisionSelectionSource,
   DocumentSectionKey,
@@ -29,7 +29,6 @@ import {
   isRecord,
   optionTypes,
   readString,
-  sectionKeys,
   selectionSources,
 } from './protocolInternals';
 import type { PayloadParseResult } from './protocolInternals';
@@ -154,8 +153,12 @@ export function parsePlanMergeAnalysisPayload(input: unknown): PayloadParseResul
 export function validateDraftNormalizeResult(
   draft: LocalDraftSubmission,
   result: DraftNormalizeResult,
+  documentType: ProjectSettings['documentType'] = 'service_plan',
 ): PlanMergeValidationResult {
   const errors: string[] = [];
+  // 섹션은 기획서 타입이 정한다. 풀 전체를 허용하면 PRD 결과에 "사용자 Pain Point"가
+  // 섞여도 통과한다.
+  const typeSectionKeys = new Set(getDocumentSections(documentType).map((section) => section.key));
   const ids = new Set<string>();
 
   if (result.protocolVersion !== '0.4') {
@@ -172,7 +175,7 @@ export function validateDraftNormalizeResult(
     if (idea.sourceModel !== draft.aiModel) {
       errors.push(`normalizedIdeas[${index}] must use sourceModel ${draft.aiModel}`);
     }
-    if (!sectionKeys.has(idea.sectionKey)) {
+    if (!typeSectionKeys.has(idea.sectionKey)) {
       errors.push(`normalizedIdeas[${index}] has invalid sectionKey`);
     }
     if (!idea.sourceExcerpt.trim()) {
@@ -222,11 +225,17 @@ function forbiddenDirectionJudgementErrors(judgement: unknown, path: string) {
   return errors;
 }
 
+/** 이 결과가 따라야 하는 섹션 체계. 기획서 타입이 정한다. */
+function typeSectionKeySet(payload: PlanMergeAnalysisPayload) {
+  return new Set(getDocumentSections(payload.project.documentType).map((section) => section.key));
+}
+
 export function validatePlanMergeAnalysis(
   payload: PlanMergeAnalysisPayload,
   result: unknown,
 ): PlanMergeValidationResult {
   const errors: string[] = [];
+  const allowedSectionKeys = typeSectionKeySet(payload);
 
   if (!isRecord(result)) {
     return {
@@ -300,7 +309,7 @@ export function validatePlanMergeAnalysis(
     } else if (draftsById.get(idea.sourceDraftId)?.aiModel !== idea.sourceModel) {
       errors.push(`normalizedIdeas[${index}] sourceModel does not match source draft`);
     }
-    if (!sectionKeys.has(idea.sectionKey)) {
+    if (!allowedSectionKeys.has(idea.sectionKey)) {
       errors.push(`normalizedIdeas[${index}] has invalid sectionKey`);
     }
     if (!ideaTypes.has(idea.ideaType)) {
@@ -341,7 +350,7 @@ export function validatePlanMergeAnalysis(
       errors.push(`decisionBlocks[${blockIndex}] has duplicated id ${block.id}`);
     }
     seenDecisionBlockIds.add(block.id);
-    if (!sectionKeys.has(block.sectionKey)) {
+    if (!allowedSectionKeys.has(block.sectionKey)) {
       errors.push(`decisionBlocks[${blockIndex}] has invalid sectionKey`);
     }
     if (!hasText(block.topic)) {
@@ -428,7 +437,7 @@ export function validatePlanMergeAnalysis(
       return;
     }
 
-    if (!sectionKeys.has(section.sectionKey)) {
+    if (!allowedSectionKeys.has(section.sectionKey)) {
       errors.push(`finalDocumentSections[${index}] has invalid sectionKey`);
     }
     if (finalSectionKeys.has(section.sectionKey)) {
@@ -480,7 +489,7 @@ export function validatePlanMergeAnalysis(
 
   const seenMissingSections = new Set<DocumentSectionKey>();
   missingSections.forEach((sectionKey) => {
-    if (!sectionKeys.has(sectionKey)) {
+    if (!allowedSectionKeys.has(sectionKey)) {
       errors.push(`missingSections includes invalid sectionKey ${sectionKey}`);
     }
     if (seenMissingSections.has(sectionKey)) {

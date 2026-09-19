@@ -137,8 +137,12 @@ export default function App() {
   );
   const displayedNotice = storageFailureNotice ?? notice;
   const mergeSections = useMemo(
-    () => createDocumentSectionsFromAnalysis(workspaceState.analysisResult, workspaceState.drafts),
-    [workspaceState.analysisResult, workspaceState.drafts],
+    () => createDocumentSectionsFromAnalysis(
+      workspaceState.analysisResult,
+      workspaceState.drafts,
+      workspaceState.project.documentType,
+    ),
+    [workspaceState.analysisResult, workspaceState.drafts, workspaceState.project.documentType],
   );
   const selectedSection = mergeSections.find((section) => section.number === activeSection) ?? mergeSections[0];
   // 실행 전 비용 안내. 토큰은 추정하지 않고, 호출 수·직전 실측·키 출처만 말한다.

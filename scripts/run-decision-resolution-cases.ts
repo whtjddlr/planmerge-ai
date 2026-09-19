@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { applyDecisionOptionOverride, applyDecisionResolutionProposal } from '../src/planmerge/lib/analysisOverride';
 import { evaluateAnalysisQuality, isActionableFinding } from '../src/planmerge/lib/analysisQuality';
-import { hasConflictOption } from '../src/planmerge/lib/analysisViewModel';
+import { createDocumentSectionsFromAnalysis as sectionsForType, hasConflictOption } from '../src/planmerge/lib/analysisViewModel';
+import { resultSectionsMatchDocumentType } from '../src/planmerge/lib/localWorkspace';
 import { createDocumentSectionsFromAnalysis } from '../src/planmerge/lib/analysisViewModel';
 import {
   buildDecisionResolutionPrompt,
@@ -15,6 +16,7 @@ import {
 import {
   conflictsWithForbiddenDirection,
   documentSectionDefinitions,
+  getDocumentSections,
   ensureAssumptionBackedBlocksAreReviewed,
   ensureDecisionBlockShape,
   ensureOptionsCiteKnownIdeas,
@@ -929,6 +931,7 @@ const cases: Array<{ id: string; run: () => string }> = [
         },
         analysisResult.decisionBlocks,
         ideas,
+        analysisPayload,
       );
 
       assert.equal(invented.valid, false);
@@ -948,6 +951,7 @@ const cases: Array<{ id: string; run: () => string }> = [
         },
         analysisResult.decisionBlocks,
         ideas,
+        analysisPayload,
       );
 
       assert.equal(strayIdea.valid, false);
@@ -976,6 +980,7 @@ const cases: Array<{ id: string; run: () => string }> = [
         },
         analysisResult.decisionBlocks,
         [forbidden!],
+        analysisPayload,
       );
 
       assert.equal(validation.valid, false);
@@ -999,6 +1004,7 @@ const cases: Array<{ id: string; run: () => string }> = [
         },
         analysisResult.decisionBlocks,
         [idea],
+        analysisPayload,
       );
 
       assert.equal(missing.valid, false, 'replacing a selection without naming the loser is ambiguous');
@@ -1015,6 +1021,7 @@ const cases: Array<{ id: string; run: () => string }> = [
         },
         analysisResult.decisionBlocks,
         [idea],
+        analysisPayload,
       );
 
       assert(named.valid, "naming the demoted option must be accepted");
@@ -1057,6 +1064,7 @@ const cases: Array<{ id: string; run: () => string }> = [
           },
           analysisResult.decisionBlocks,
           ideas,
+          analysisPayload,
         );
 
         assert.equal(validation.valid, false, `${optionTypes.join('+')} must be rejected`);
@@ -1080,6 +1088,7 @@ const cases: Array<{ id: string; run: () => string }> = [
         },
         analysisResult.decisionBlocks,
         ideas,
+        analysisPayload,
       );
 
       assert.equal(validation.valid, false);
@@ -1111,6 +1120,7 @@ const cases: Array<{ id: string; run: () => string }> = [
         },
         analysisResult.decisionBlocks,
         [idea],
+        analysisPayload,
       );
 
       assert(validation.valid, 'short prose is not a forgery');
@@ -1146,6 +1156,7 @@ const cases: Array<{ id: string; run: () => string }> = [
         },
         analysisResult.decisionBlocks,
         [idea],
+        analysisPayload,
       );
 
       assert.equal(validation.valid, false, 'conflictLevel is derived from severity, so it cannot be absent');
@@ -1620,7 +1631,8 @@ const cases: Array<{ id: string; run: () => string }> = [
           sourceDecisionBlockIds: ['decision_collapsed'],
           composedFrom: [{ decisionBlockId: 'decision_collapsed', selectedOptionId: 'option_all' }],
         }],
-        missingSections: documentSectionDefinitions
+        // 누락 섹션은 이 기획서 타입의 체계에서만 나온다. 풀 전체를 쓰면 검증에서 떨어진다.
+        missingSections: getDocumentSections(analysisPayload.project.documentType)
           .map((section) => section.key)
           .filter((key) => key !== 'mvp_scope'),
       };
@@ -1924,6 +1936,74 @@ const cases: Array<{ id: string; run: () => string }> = [
       assert.equal(conflictSection.status, 'conflict', 'a real conflict option still reads as a conflict');
 
       return 'only a real conflict option is called a conflict on screen; a mere alternative is a review';
+    },
+  },
+  {
+    id: 'document-type-picks-a-different-section-scheme',
+    run: () => {
+      // 한때 documentType은 분석 어디에도 들어가지 않았다. PRD를 골라도 서비스
+      // 기획서용 12섹션으로 병합됐다 — 선택지가 있는데 아무 일도 하지 않았다.
+      const servicePlan = getDocumentSections('service_plan');
+      const prd = getDocumentSections('prd');
+      const businessPlan = getDocumentSections('business_plan');
+      const featureSpec = getDocumentSections('feature_spec');
+
+      assert.notDeepEqual(
+        prd.map((section) => section.key),
+        servicePlan.map((section) => section.key),
+        'PRD must not be the service plan scheme',
+      );
+
+      // PRD에는 비목표가 있고 Pain Point가 없다. 사업 계획서에는 수익 모델이 있다.
+      assert(prd.some((section) => section.key === 'non_goals'));
+      assert(!prd.some((section) => section.key === 'pain_points'));
+      assert(businessPlan.some((section) => section.key === 'business_model'));
+      assert(featureSpec.some((section) => section.key === 'edge_cases'));
+
+      // 같은 키라도 타입마다 이름이 다르다.
+      assert.equal(servicePlan.find((section) => section.key === 'mvp_scope')?.title, 'MVP 범위');
+      assert.equal(prd.find((section) => section.key === 'mvp_scope')?.title, '출시 범위');
+
+      // 모든 타입이 미결정 사항으로 끝난다 — 남은 질문을 문서에서 지우지 않는다.
+      [servicePlan, prd, businessPlan, featureSpec].forEach((scheme) => {
+        assert.equal(scheme[scheme.length - 1].key, 'open_questions');
+        assert.deepEqual(
+          scheme.map((section) => section.sortOrder),
+          scheme.map((_section, index) => index + 1),
+          'sortOrder is the position in this scheme',
+        );
+      });
+
+      return 'each document type has its own section scheme, titles, and order';
+    },
+  },
+  {
+    id: 'a-result-from-another-document-type-is-rejected-with-a-reason',
+    run: () => {
+      // 서비스 기획서 결과를 PRD 페이로드로 검증하면 떨어져야 한다. Pain Point는
+      // PRD 체계에 없는 섹션이다.
+      const prdPayload = {
+        ...analysisPayload,
+        project: { ...analysisPayload.project, documentType: 'prd' as const },
+      };
+
+      assert.equal(validatePlanMergeAnalysis(analysisPayload, analysisResult).valid, true);
+      assert.equal(
+        validatePlanMergeAnalysis(prdPayload, analysisResult).valid,
+        false,
+        'a service-plan result must not validate as a PRD',
+      );
+
+      // 그리고 그 이유를 구분할 수 있어야 한다 — 망가진 결과가 아니라 다른 체계다.
+      assert.equal(resultSectionsMatchDocumentType(analysisResult, 'service_plan'), true);
+      assert.equal(resultSectionsMatchDocumentType(analysisResult, 'prd'), false);
+
+      // 화면도 타입의 체계를 따른다.
+      const prdSections = sectionsForType(undefined, [], 'prd');
+      assert.equal(prdSections.length, getDocumentSections('prd').length);
+      assert(!prdSections.some((section) => section.sectionKey === 'pain_points'));
+
+      return 'switching the document type invalidates an old result and the load path can say why';
     },
   },
 ];

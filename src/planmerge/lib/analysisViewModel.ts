@@ -1,7 +1,7 @@
 import type { DecisionSource, DecisionTrace, DocumentSectionData, SectionStatus } from '../data/mergeResult';
-import type { LocalDraftSubmission } from './localWorkspace';
+import type { LocalDraftSubmission, ProjectSettings } from './localWorkspace';
 import {
-  documentSectionDefinitions,
+  getDocumentSections,
   sectionIsStale,
   type DecisionSelectionSource,
   type NormalizedIdea,
@@ -10,12 +10,21 @@ import {
   type ProtocolDecisionBlock,
 } from './ai/planmergeProtocol';
 
+/**
+ * 화면에 쓸 섹션 목록.
+ *
+ * 섹션의 개수·순서·제목은 기획서 타입이 정한다. 타입을 넘기지 않으면 서비스 기획서
+ * 체계를 쓴다 — 저장된 결과를 타입 없이 읽는 자리가 남아 있어서다.
+ */
 export function createDocumentSectionsFromAnalysis(
   analysisResult?: PlanMergeAnalysisResult,
   drafts: LocalDraftSubmission[] = [],
+  documentType: ProjectSettings['documentType'] = 'service_plan',
 ): DocumentSectionData[] {
+  const schemeSections = getDocumentSections(documentType);
+
   if (!analysisResult) {
-    return createEmptyDocumentSections();
+    return createEmptyDocumentSections(documentType);
   }
 
   const finalSectionsByKey = new Map(
@@ -29,7 +38,7 @@ export function createDocumentSectionsFromAnalysis(
   const ideasById = new Map(analysisResult.normalizedIdeas.map((idea) => [idea.id, idea]));
   const draftsById = new Map(drafts.map((draft) => [draft.id, draft]));
 
-  return documentSectionDefinitions.map((definition) => {
+  return schemeSections.map((definition) => {
     const finalSection = finalSectionsByKey.get(definition.key);
     const decisionBlocks = decisionBlocksByKey.get(definition.key) ?? [];
     const violatesForbiddenDirection = sectionSelectsForbiddenDirection(
@@ -66,8 +75,10 @@ export function createDocumentSectionsFromAnalysis(
   });
 }
 
-function createEmptyDocumentSections(): DocumentSectionData[] {
-  return documentSectionDefinitions.map((definition) => ({
+function createEmptyDocumentSections(
+  documentType: ProjectSettings['documentType'],
+): DocumentSectionData[] {
+  return getDocumentSections(documentType).map((definition) => ({
     number: definition.sortOrder,
     sectionKey: definition.key,
     title: definition.title,

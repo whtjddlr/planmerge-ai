@@ -18,7 +18,7 @@
  * 2. **파생** — 섹션 제목은 정의된 이름을 쓴다. 모델이 섹션 이름을 바꾸면
  *    12개 섹션 체계가 흔들린다.
  */
-import { composedFromBlocks, documentSectionDefinitions } from './planmergeProtocol';
+import { composedFromBlocks, getDocumentSections } from './planmergeProtocol';
 import type {
   DocumentSectionKey,
   NormalizedIdea,
@@ -29,10 +29,6 @@ import type {
 } from './planmergeProtocol';
 
 const MAX_CONTENT_LENGTH = 20_000;
-
-const sectionKeys = new Set<DocumentSectionKey>(
-  documentSectionDefinitions.map((section) => section.key),
-);
 
 export type DocumentCompositionValidation =
   | { valid: true; sections: ProtocolFinalDocumentSection[] }
@@ -68,7 +64,7 @@ export function buildDocumentCompositionPrompt(
     bySection.set(block.sectionKey, [...(bySection.get(block.sectionKey) ?? []), block]);
   });
 
-  const sections = documentSectionDefinitions
+  const sections = getDocumentSections(payload.project.documentType)
     .filter((definition) => bySection.has(definition.key))
     .map((definition) => ({
       sectionKey: definition.key,
@@ -140,6 +136,9 @@ export function validateDocumentCompositionResult(
     return { valid: false, errors: ['sections must be an array'] };
   }
 
+  // 섹션 목록과 제목은 기획서 타입이 정한다.
+  const schemeSections = getDocumentSections(payload.project.documentType);
+  const sectionKeys = new Set<DocumentSectionKey>(schemeSections.map((section) => section.key));
   const blocksById = new Map(blocks.map((block) => [block.id, block] as const));
   const ideasById = new Map(ideas.map((idea) => [idea.id, idea] as const));
   const seenSectionKeys = new Set<DocumentSectionKey>();
@@ -240,7 +239,7 @@ export function validateDocumentCompositionResult(
       sections.push({
         sectionKey,
         // 제목은 정의된 이름을 쓴다. 모델이 바꾸면 12개 섹션 체계가 흔들린다.
-        title: documentSectionDefinitions.find((section) => section.key === sectionKey)?.title ?? sectionKey,
+        title: schemeSections.find((section) => section.key === sectionKey)?.title ?? sectionKey,
         content,
         sourceDecisionBlockIds,
         // 어떤 선택안을 보고 썼는지 기록한다. 이후 사람이 선택안을 바꾸면 이 기록과

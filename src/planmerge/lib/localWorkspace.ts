@@ -1,5 +1,6 @@
 import {
-  documentSectionDefinitions,
+  getDocumentSections,
+  isSectionKeyOfType,
   upgradeStoredAnalysisResult,
   validatePlanMergeAnalysis,
 } from './ai/planmergeProtocol';
@@ -274,7 +275,8 @@ export const sampleDrafts: LocalDraftSubmission[] = [
 export const sampleWorkspaceSummary = {
   title: sampleProjectSettings.title,
   draftCount: sampleDrafts.length,
-  sectionCount: documentSectionDefinitions.length,
+  // 샘플은 서비스 기획서다. 풀 전체가 아니라 그 타입의 섹션 수를 보여준다.
+  sectionCount: getDocumentSections(sampleProjectSettings.documentType).length,
 } as const;
 
 export function createEmptyWorkspaceState(): LocalWorkspaceState {
@@ -411,6 +413,26 @@ function sanitizeProjectSettings(value: unknown): ProjectSettings {
 
 // 손상된 analysisResult가 저장/가져오기 경로로 들어오면 렌더 크래시가 반복되므로
 // 구조 검증을 통과한 경우에만 유지한다.
+/**
+ * 버린 결과가 기획서 타입을 바꿔서 떨어진 것인가.
+ *
+ * 섹션 체계는 타입이 정한다. 타입을 바꾸면 이전 결과의 섹션 키가 새 체계에 없어
+ * 검증에서 떨어진다 — 결과가 망가진 게 아니라 다른 문서의 섹션이라서다. 그 차이를
+ * 말해 주지 않으면 사용자는 분석 결과가 왜 사라졌는지 알 수 없다(규칙 14).
+ */
+export function resultSectionsMatchDocumentType(
+  value: unknown,
+  documentType: ProjectSettings['documentType'],
+) {
+  if (!isRecord(value) || !Array.isArray(value.finalDocumentSections)) {
+    return true;
+  }
+
+  return value.finalDocumentSections.every((section) => (
+    !isRecord(section) || isSectionKeyOfType(documentType, section.sectionKey)
+  ));
+}
+
 function sanitizeAnalysisResult(
   value: unknown,
   project: ProjectSettings,
@@ -698,7 +720,11 @@ function sanitizeStoredWorkspaceState(value: unknown): StoredWorkspaceParseResul
   const warnings: string[] = [];
 
   if (value.analysisResult !== undefined && !analysisResult) {
-    warnings.push('저장된 병합 결과가 현재 분석 프로토콜과 맞지 않아 제외했습니다. 초안은 그대로 있으니 분석을 다시 실행해 주세요.');
+    warnings.push(
+      resultSectionsMatchDocumentType(value.analysisResult, project.documentType)
+        ? '저장된 병합 결과가 현재 분석 프로토콜과 맞지 않아 제외했습니다. 초안은 그대로 있으니 분석을 다시 실행해 주세요.'
+        : '기획서 타입이 바뀌어 저장된 병합 결과의 섹션 체계가 맞지 않습니다. 초안은 그대로 있으니 새 타입으로 다시 분석해 주세요.',
+    );
   }
 
   return {
@@ -1097,7 +1123,11 @@ export function parseWorkspaceImport(rawText: string): WorkspaceImportResult {
   const approvedBlockIds = sanitizeApprovedBlockIds(workspace.approvedBlockIds, analysisResult);
 
   if (workspace.analysisResult !== undefined && !analysisResult) {
-    warnings.push('분석 결과가 형식 검증에 실패해 제외했습니다. 다시 분석을 실행해 주세요.');
+    warnings.push(
+      resultSectionsMatchDocumentType(workspace.analysisResult, project.documentType)
+        ? '분석 결과가 형식 검증에 실패해 제외했습니다. 다시 분석을 실행해 주세요.'
+        : '기획서 타입이 바뀌어 이전 분석 결과의 섹션 체계가 맞지 않습니다. 새 타입으로 다시 분석해 주세요.',
+    );
   }
 
   return {

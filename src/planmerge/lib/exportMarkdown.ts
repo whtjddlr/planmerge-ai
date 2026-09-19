@@ -12,7 +12,9 @@ type BuildMarkdownExportInput = {
   analysisResult?: PlanMergeAnalysisResult;
 };
 
-const sectionTitlesByKey = new Map<DocumentSectionKey, string>(
+// 화면에 보이는 섹션은 이미 타입별 제목을 들고 있다. 여기서는 그 목록에 없는 키
+// (저장된 옛 결과 등)만 기본 제목으로 메운다.
+const defaultSectionTitlesByKey = new Map<DocumentSectionKey, string>(
   documentSectionDefinitions.map((section) => [section.key, section.title] as const),
 );
 
@@ -115,7 +117,7 @@ function formatOptionSources(
 }
 
 function sectionTitle(sectionKey: DocumentSectionKey) {
-  return sectionTitlesByKey.get(sectionKey) ?? sectionKey;
+  return defaultSectionTitlesByKey.get(sectionKey) ?? sectionKey;
 }
 
 function optionTypeLabel(optionType: ProtocolDecisionOption['optionType']) {

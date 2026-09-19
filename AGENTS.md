@@ -24,7 +24,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 |---|---|---|
 | `npm ci` | 의존성 설치 | `postinstall`에서 `prisma generate` 자동 실행 |
 | `npm run lint` | ESLint | |
-| `npm run harness:quality` | **품질 회귀 게이트** (품질 13 + 결정 54 케이스) | 오프라인. 모델 호출 없음. 실패 시 exit 1 |
+| `npm run harness:quality` | **품질 회귀 게이트** (품질 13 + 결정 56 케이스) | 오프라인. 모델 호출 없음. 실패 시 exit 1 |
 | `npm run harness:local` | 로컬 하네스 단건 실행 + 프롬프트 미리보기 | 오프라인 |
 | `npm run build` | `next build` | `OPENAI_API_KEY`/`GMS_API_KEY`/`DATABASE_URL` 없어도 성공해야 함 |
 | `npm run dev` | 개발 서버 | |
@@ -41,7 +41,9 @@ This version has breaking changes — APIs, conventions, and file structure may 
 ## 아키텍처 지도
 
 - `src/planmerge/lib/ai/planmergeProtocol.ts` — **시스템의 심장이자 배럴.** 한 파일이 1,800줄이 되어 역할별로 나눴고, 이 경로는 전부 re-export한다. 호출자 26곳은 바뀌지 않았다. 내부 헬퍼(`protocolInternals.ts`)는 배럴이 내보내지 않는다.
-  - `protocolTypes.ts` — v0.4 타입, 섹션 정의 12개, `MAX_ANALYSIS_DRAFT_COUNT`. **12개 섹션은 서비스 기획서 형태이고 `documentType`은 분석 프롬프트 어디에도 들어가지 않는다**(클러스터링 페이로드에만 실린다). `prd`/`business_plan`/`feature_spec`을 골라도 같은 12섹션으로 병합된다 — 문서 타입별 섹션 체계는 아직 없는 기능이지 미검증 기능이 아니다.
+  - `protocolTypes.ts` — v0.4 타입, **섹션 키 풀 21개 + 기획서 타입별 섹션 체계**(`getDocumentSections`), `MAX_ANALYSIS_DRAFT_COUNT`. 풀의 제목은 기본값이고, 실제 문서의 섹션 목록·순서·제목은 타입이 정한다 — 같은 `mvp_scope` 키가 서비스 기획서에서는 "MVP 범위", PRD에서는 "출시 범위"다. 같은 내용을 다루므로 키를 나누지 않는다(나누면 정규화 모델이 둘을 구분할 근거가 없다).
+    - 한때 `documentType`이 분석 어디에도 들어가지 않아 PRD를 골라도 서비스 기획서용 12섹션으로 병합됐다 — 선택지가 있는데 아무 일도 하지 않는 화면이었다. 지금은 프롬프트 3종·검증기·문서 작성·배치 판정·품질 게이트·뷰모델·내보내기가 모두 타입의 체계를 쓴다. **풀 전체(`documentSectionDefinitions`)는 기본 제목 조회에만 쓴다** — 허용 섹션으로 쓰면 PRD 결과에 "사용자 Pain Point"가 섞여도 통과한다.
+    - 타입을 바꾸면 이전 결과의 섹션 키가 새 체계에 없어 검증에서 떨어진다. 망가진 게 아니라 다른 문서의 섹션이므로, 로드 경고가 `resultSectionsMatchDocumentType`으로 그 차이를 구분해 말한다(규칙 14).
   - `protocolValidation.ts` — 수기 검증기 3종(`parsePlanMergeAnalysisPayload`, `validateDraftNormalizeResult`, `validatePlanMergeAnalysis`)
   - `protocolPrompts.ts` — 프롬프트 빌더 4종(정규화·병합·구형 단일 분석·복구)
   - `protocolMigrations.ts` — 저장 결과 버전 올리기, 서버 소유 필드(`ensureServerOwnedEnvelope`, `ensureServerOwnedSelectionSource`), 본문 낡음 파생(`sectionIsStale`)
