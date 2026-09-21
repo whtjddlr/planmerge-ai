@@ -24,7 +24,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 |---|---|---|
 | `npm ci` | 의존성 설치 | `postinstall`에서 `prisma generate` 자동 실행 |
 | `npm run lint` | ESLint | |
-| `npm run harness:quality` | **품질 회귀 게이트** (품질 13 + 결정 59 케이스) | 오프라인. 모델 호출 없음. 실패 시 exit 1 |
+| `npm run harness:quality` | **품질 회귀 게이트** (품질 13 + 결정 60 케이스) | 오프라인. 모델 호출 없음. 실패 시 exit 1 |
 | `npm run harness:local` | 로컬 하네스 단건 실행 + 프롬프트 미리보기 | 오프라인 |
 | `npm run build` | `next build` | `OPENAI_API_KEY`/`GMS_API_KEY`/`DATABASE_URL` 없어도 성공해야 함 |
 | `npm run dev` | 개발 서버 | |
@@ -170,6 +170,11 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - **직접 OpenAI 경로의 기본 모델은 `ANALYSIS_MODEL_PREFERENCE[0]`(gpt-5.6-luna)다.** 한때 GMS 기본값 `gpt-4.1`을 같이 써서, 운영 env에 `OPENAI_API_KEY`만 있고 `OPENAI_ANALYSIS_MODEL`이 없던 배포가 검증한 모델과 다른 모델로 조용히 돌았다(배포 직후 `/api/analysis-config`가 `model: gpt-4.1`). 모델을 바꾸려면 env로 명시한다.
 - 키가 없으면 AI 라우트는 `503`으로 실패한다(규칙 4). 다만 `lint`/`build`/`harness:quality`는 키 없이 통과해야 하므로 CI·테스트가 키를 요구하게 만들지 않는다.
 - 호출 비용이 크므로(초안 수만큼 병렬 호출) rate limit(`analyze` 5회/분)을 완화하지 않는다.
+- **merge 호출은 `reasoningEffort: 'medium'`로 돈다.** 이 호출은 아이디어를 주제별로 묶고 각 묶음의 채택안·대안·충돌을 정하는 일을 한꺼번에 하는데, 기본값으로는 묶기 전에 쓰기 시작해서 구조가 무너졌다. 실측(초안 7개, 아이디어 25개, 2026-09-21):
+  - **고치기 전 3/3 실패.** `decisionBlocks` 배열 안에 **블록이 아니라 옵션 객체**가 들어갔다(`optionType`·`content`만 있고 `options` 배열이 없다). 매번 같은 자리였다 — 방금 닫은 블록에 붙일 대안이 하나 더 생기면 배열 레벨에 얹는다. 그리고 2/3은 **그 자리에서 JSON을 닫고 끝냈다**: 출력 1,076~1,212 토큰(예산 32,000), 인용 5/25. 커버리지가 모자란 것처럼 보였지만 실제로는 조기 종료였다.
+  - 프롬프트에 **커버리지 요구가 아예 없었다.** 서버는 미인용 아이디어를 결함으로 보고 배치 판정을 부르거나(`PLACEMENT_RECOVERABLE_IDEA_LIMIT` 아래) blocker로 올리는데(위), 프롬프트는 "옵션마다 출처를 달아라"까지만 말했다. 서버가 요구하는 것을 모델에게 말하지 않은 계약 불일치다. 규칙 6a·10·11과 판단 절차 0번(먼저 묶고 나서 쓴다)을 넣었다: 커버리지 20/56/20% → **100/32/100%**, 구조 오류 3/3 → 1/3.
+  - 남은 1/3은 추론 예산이었다. 이탈한 응답의 추론 토큰이 건강한 응답의 절반이었다(407 대 888·1,014). `reasoningEffort: 'medium'`를 주자 **3/3이 25/25 인용, 구조 오류 0**, 충돌 의견 2개 유지, 옵션 1개뿐인 블록이 9/12 → 2~3/11로 줄었다(블록당 옵션 2.3개 — 실제로 묶인다). 대신 24~51초가 걸린다(끄면 11~30초). merge 단계 상한 180초가 이 여유를 만든다.
+  - 복구 호출에는 아직 주지 않았다 — 같은 구조를 만드는 호출이라 도움이 될 것 같지만 재보지 않았다.
 - **프롬프트에 같은 데이터를 두 번 넣지 않는다.** merge 프롬프트는 `normalizedIdeas`를 딱 한 번 직렬화한다. 한때 두 번 들어가 있어 호출마다 3천 토큰(전체 입력의 22%)을 낭비했다. 프롬프트를 고칠 때 `JSON.stringify(normalizedIdeas)`가 몇 번 나오는지 센다.
 - 프롬프트 캐시는 기대하지 않는다. normalize 프롬프트는 호출당 약 1,050 토큰이고 공통 접두사는 약 690 토큰으로 OpenAI 캐시 최소치(1,024)에 미달한다. 실측 적중률 0%다. 캐시를 노려 프롬프트를 늘리지 않는다 — 미달이면 늘린 만큼 그냥 더 낸다.
 - 분석 1회의 모델 호출 수는 `초안 수(normalize) + 1(merge) + 배치 판정 0~1회 + 문서 작성 1회 + repair 0~1회`다. 실측(초안 7개): 11회, 입력 20,297 / 출력 12,005 토큰, 80초. 배치 판정과 문서 작성은 블록 요약만 입력으로 받아서 merge(13k)보다 훨씬 작다 — 누락 몇 개 때문에 merge를 다시 돌리는 것보다 싸기 때문에 나눠 둔 것이다.

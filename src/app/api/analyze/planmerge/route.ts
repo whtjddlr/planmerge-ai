@@ -861,7 +861,13 @@ async function runAnalysisPipeline(
       maxOutputTokens: MERGE_MAX_OUTPUT_TOKENS,
       config,
       onUsage: hooks.onUsage,
+      // 추론 예산을 명시한다. 이 호출은 25개 아이디어를 주제별로 묶고 각 묶음의
+      // 채택안·대안·충돌을 정하는 일을 한꺼번에 하는데, 기본값으로는 묶기 전에
+      // 쓰기 시작해서 구조가 무너졌다 — 실측에서 이탈한 응답의 추론 토큰이
+      // 건강한 응답의 절반이었다(407 대 888·1,014).
+      reasoningEffort: 'medium',
       // 가장 큰 호출이라 상한이 가장 높다. normalize가 빨랐으면 120초보다 더 받는다.
+      // 추론을 켜면 24~51초가 걸려서(끄면 11~30초) 이 여유가 실제로 쓰인다.
       ...context.budget.forStage('merge'),
     },
   );
