@@ -24,7 +24,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 |---|---|---|
 | `npm ci` | 의존성 설치 | `postinstall`에서 `prisma generate` 자동 실행 |
 | `npm run lint` | ESLint | |
-| `npm run harness:quality` | **품질 회귀 게이트** (품질 13 + 결정 56 케이스) | 오프라인. 모델 호출 없음. 실패 시 exit 1 |
+| `npm run harness:quality` | **품질 회귀 게이트** (품질 13 + 결정 59 케이스) | 오프라인. 모델 호출 없음. 실패 시 exit 1 |
 | `npm run harness:local` | 로컬 하네스 단건 실행 + 프롬프트 미리보기 | 오프라인 |
 | `npm run build` | `next build` | `OPENAI_API_KEY`/`GMS_API_KEY`/`DATABASE_URL` 없어도 성공해야 함 |
 | `npm run dev` | 개발 서버 | |
@@ -159,10 +159,14 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 ### GMS API
 - 엔드포인트: OpenAI 호환 Responses API (`GMS_API_URL`, 기본 `https://gms.ssafy.io/gmsapi/api.openai.com/v1/responses`), 모델 기본 `gpt-4.1`(`GMS_DEFAULT_MODEL` → `MODEL_NAME` 순 폴백).
-- `callGmsJson`은 `temperature 0.1`을 시도하고, 모델이 거부하면(추론 모델은 400을 준다) 그 사실을 학습해 빼고 재시도한다. `json_object` 포맷, 요청당 120초 타임아웃. 구조화 출력은 JSON Schema 강제가 아니라 **프롬프트 + 수기 검증기** 조합이다.
+- `callGmsJson`은 `temperature 0.1`을 시도하고, 모델이 거부하면(추론 모델은 400을 준다) 그 사실을 학습해 빼고 재시도한다. `json_object` 포맷. 구조화 출력은 JSON Schema 강제가 아니라 **프롬프트 + 수기 검증기** 조합이다.
+- **호출 제한 시간은 단계별 예산에서 나온다**(`src/planmerge/lib/ai/analysisBudget.ts`). 한때 모든 호출이 똑같이 120초를 받았고 타임아웃은 재시도 대상이 아니어서(재시도는 408/409/425/429/5xx만), 호출 한 건이 느리면 분석 전체가 502였다 — 실측 5회 중 1회가 이 경로였는데 같은 조건의 성공 실행은 80초를 썼다. `maxDuration`이 300초니 200초 넘게 남은 채로 포기한 것이다.
+  - 예산은 요청당 하나(`createAnalysisBudget`, 270초 = 300초 − 응답 몫 30초)이고 모든 호출이 같은 deadline을 본다. 한 호출의 제한 시간은 **단계 상한**과 **남은 시간 − 뒤에 반드시 올 단계들의 몫(reserve)** 중 작은 쪽이다(`stageCallTimeoutMs`, 바닥 20초). merge 상한은 180초로 올렸다 — 가장 큰 호출이고, 앞이 빨랐으면 120초에서 죽던 호출이 60초를 더 받는다.
+  - **타임아웃도 재시도한다. 남은 예산이 한 번 더 온전히 부를 만큼일 때만**(`canRetryAfterTimeout`, 1회). `deadlineAt`이 없는 호출은 예전대로 그 자리에서 실패한다. "상한을 올릴까 / 재시도를 붙일까"는 `maxDuration`과 맞바꾸는 판단처럼 보였지만, deadline을 들고 다니면 실행 시점에 아는 사실로 정해진다. 타임아웃은 실패를 아는 데 제한 시간을 다 쓰므로 일시적 오류(2회)보다 한도가 낮다.
+  - 예산을 넘겨 부르지 않는 것 자체가 목적이다. 플랫폼이 함수를 끊으면 응답이 없고 사용자는 사유도 진행 단계도 받지 못한다 — 규칙 4가 말하는 정직한 실패가 아니라 그냥 끊긴 연결이다. 그래서 **단건 라우트도 자기 `maxDuration`보다 짧은 `timeoutMs`를 명시한다**(클러스터링·본문 다시 쓰기 50초/60초, Decision Room 105초/120초). 기본값 120초를 그대로 쓰면 60초 라우트는 타임아웃 오류를 낼 기회조차 없었다.
 - 일시적 업스트림 오류(408/409/425/429/5xx)는 지수 백오프로 최대 2회 재시도하며 `Retry-After`를 존중한다. 병렬 호출이 동시에 재시도해 다시 429를 맞지 않도록 지터를 넣는다.
 - `normalizeDrafts`는 동시 실행을 `NORMALIZE_CONCURRENCY`(6)로 묶고, 한 건이 실패하면 `AbortSignal`로 남은 호출을 끊는다. 초안 전부를 동시에 던지면 업스트림 rate limit을 자초하고, 끊지 않으면 아무도 읽지 않을 응답에 토큰을 쓴다.
-- AI 라우트는 `export const maxDuration`을 반드시 둔다(분석 300초 / Decision Room 120초 / 클러스터링 60초). 없으면 플랫폼 기본 타임아웃에 걸려 배포 환경에서만 실패한다. Vercel은 플랜 한도를 넘는 값을 거절하므로 플랜을 바꾸면 같이 조정한다.
+- AI 라우트는 `export const maxDuration`을 반드시 둔다(분석 300초 / Decision Room 120초 / 클러스터링·본문 다시 쓰기 60초). 없으면 플랫폼 기본 타임아웃에 걸려 배포 환경에서만 실패한다. Vercel은 플랜 한도를 넘는 값을 거절하므로 플랜을 바꾸면 같이 조정한다 — `PIPELINE_BUDGET_MS`와 단건 라우트의 `timeoutMs`도 같이 본다.
 - **직접 OpenAI 경로의 기본 모델은 `ANALYSIS_MODEL_PREFERENCE[0]`(gpt-5.6-luna)다.** 한때 GMS 기본값 `gpt-4.1`을 같이 써서, 운영 env에 `OPENAI_API_KEY`만 있고 `OPENAI_ANALYSIS_MODEL`이 없던 배포가 검증한 모델과 다른 모델로 조용히 돌았다(배포 직후 `/api/analysis-config`가 `model: gpt-4.1`). 모델을 바꾸려면 env로 명시한다.
 - 키가 없으면 AI 라우트는 `503`으로 실패한다(규칙 4). 다만 `lint`/`build`/`harness:quality`는 키 없이 통과해야 하므로 CI·테스트가 키를 요구하게 만들지 않는다.
 - 호출 비용이 크므로(초안 수만큼 병렬 호출) rate limit(`analyze` 5회/분)을 완화하지 않는다.

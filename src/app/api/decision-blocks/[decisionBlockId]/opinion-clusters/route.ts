@@ -105,6 +105,9 @@ export async function POST(request: Request, context: RouteContext) {
         maxOutputTokens: 2400,
         model,
         config,
+        // maxDuration이 60초인데 호출 기본값은 120초였다. 플랫폼이 먼저 함수를
+        // 끊으면 응답이 없어서 사용자는 사유도 받지 못한다 — 함수보다 먼저 끊는다.
+        timeoutMs: 50_000,
       },
     );
     const clusters = readClusterResponse(rawResult);

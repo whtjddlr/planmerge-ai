@@ -46,6 +46,8 @@ import {
   validateIdeaPlacementResult,
 } from '@/planmerge/lib/ai/ideaPlacement';
 import { classifyAnalysisFailure } from '@/planmerge/lib/ai/analysisFailureReason';
+import { createAnalysisBudget } from '@/planmerge/lib/ai/analysisBudget';
+import type { AnalysisBudget, AnalysisStage } from '@/planmerge/lib/ai/analysisBudget';
 import { checkRateLimit, getClientKey } from '@/server/rateLimit';
 
 // 초안 30개 × normalize 1회 + merge까지 한 요청 안에서 끝나야 한다. 플랫폼 기본
@@ -185,7 +187,7 @@ function usageHeaders(usage: ModelUsage) {
  * 스트리밍하고, 아니면 예전처럼 JSON 한 덩어리를 준다 — 스크립트·스텁·curl은 바뀌지
  * 않는다.
  */
-export type AnalysisStage = 'normalize' | 'merge' | 'placement' | 'compose' | 'repair';
+export type { AnalysisStage };
 
 export type AnalysisStageEvent = {
   stage: AnalysisStage;
@@ -197,6 +199,19 @@ export type AnalysisStageEvent = {
 
 type StageListener = (event: AnalysisStageEvent) => void;
 
+/**
+ * 파이프라인 한 실행이 들고 다니는 것들.
+ *
+ * budget이 여기 있는 이유는 단계마다 제한 시간이 다르기 때문이다 — merge는 남은 시간을
+ * 더 받고, 그 뒤 문서 작성 몫은 남겨 둔다(analysisBudget.ts).
+ */
+type PipelineContext = {
+  config: GmsConfig;
+  onUsage: (usage: ModelUsage) => void;
+  onStage: StageListener;
+  budget: AnalysisBudget;
+};
+
 const NDJSON_MEDIA_TYPE = 'application/x-ndjson';
 
 function wantsStream(request: Request) {
@@ -205,10 +220,9 @@ function wantsStream(request: Request) {
 
 async function normalizeDrafts(
   payload: PlanMergeAnalysisPayload,
-  config: GmsConfig,
-  onUsage: (usage: ModelUsage) => void,
-  onStage: StageListener,
+  context: PipelineContext,
 ) {
+  const { config, onUsage, onStage, budget } = context;
   const drafts = payload.drafts.filter((draft) => draft.rawText.trim());
   let completed = 0;
 
@@ -220,7 +234,16 @@ async function normalizeDrafts(
     async (draft, signal) => {
       const rawResult = await callGmsJson<DraftNormalizeResult>(
         buildDraftNormalizePrompt(payload.project, draft),
-        { maxOutputTokens: 4000, signal, config, onUsage },
+        {
+          maxOutputTokens: 4000,
+          signal,
+          config,
+          onUsage,
+          // 병렬이라 벽시계로는 가장 느린 한 건이다. 제한 시간은 단계 시작 시점이
+          // 아니라 호출 시점의 남은 예산에서 나온다 — 동시성 한도 때문에 뒤 배치는
+          // 늦게 출발한다.
+          ...budget.forStage('normalize'),
+        },
       );
       const result = normalizeDraftProtocolResult(draft, rawResult);
       const validation = validateDraftNormalizeResult(draft, result, payload.project.documentType);
@@ -531,7 +554,7 @@ async function buildMergeResult(
   payload: PlanMergeAnalysisPayload,
   raw: PlanMergeAnalysisResult,
   normalizedIdeas: NormalizedIdea[],
-  options: { config: GmsConfig; onUsage: (usage: ModelUsage) => void; onStage: StageListener },
+  options: PipelineContext,
 ): Promise<BuiltMergeResult> {
   const shaped = repairMergeShape(raw, normalizedIdeas, options.config.provider);
 
@@ -560,6 +583,7 @@ async function buildMergeResult(
         maxOutputTokens: PLACEMENT_MAX_OUTPUT_TOKENS,
         config: options.config,
         onUsage: options.onUsage,
+        ...options.budget.forStage('placement'),
       },
     );
     const placement = validateIdeaPlacementResult(
@@ -600,7 +624,7 @@ async function buildMergeResult(
 async function composeDocument(
   payload: PlanMergeAnalysisPayload,
   result: PlanMergeAnalysisResult,
-  options: { config: GmsConfig; onUsage: (usage: ModelUsage) => void; onStage: StageListener },
+  options: PipelineContext,
 ): Promise<BuiltMergeResult> {
   options.onStage({ stage: 'compose', status: 'started' });
 
@@ -610,6 +634,8 @@ async function composeDocument(
       maxOutputTokens: COMPOSITION_MAX_OUTPUT_TOKENS,
       config: options.config,
       onUsage: options.onUsage,
+      // 마지막 단계라 뒤에 남겨 둘 몫이 없다. 남은 예산을 상한까지 쓴다.
+      ...options.budget.forStage('compose'),
     },
   );
   const composition = validateDocumentCompositionResult(
@@ -648,7 +674,7 @@ async function repairDecisionBlocks(
   blockIndexes: number[],
   errors: string[],
   normalizedIdeas: NormalizedIdea[],
-  options: { config: GmsConfig; onUsage: (usage: ModelUsage) => void; onStage: StageListener },
+  options: PipelineContext,
 ): Promise<BuiltMergeResult | undefined> {
   const requests = blockIndexes
     .filter((index) => result.decisionBlocks[index] !== undefined)
@@ -670,6 +696,8 @@ async function repairDecisionBlocks(
       maxOutputTokens: BLOCK_REPAIR_MAX_OUTPUT_TOKENS,
       config: options.config,
       onUsage: options.onUsage,
+      // 복구 뒤에는 본문을 다시 쓰므로 그 몫을 남긴다.
+      ...options.budget.forStage('repair'),
     },
   );
   const repaired = validateRepairedDecisionBlocks(raw, requests.map((request) => request.repairIndex));
@@ -816,20 +844,30 @@ async function runAnalysisPipeline(
   config: GmsConfig,
   hooks: { onUsage: (usage: ModelUsage) => void; onStage: StageListener },
 ): Promise<PlanMergeAnalysisResult> {
-  const normalizedIdeas = await normalizeDrafts(payload, config, hooks.onUsage, hooks.onStage);
+  // 예산은 요청 하나당 하나다. 모든 호출이 같은 deadline을 보므로, 어느 단계도
+  // maxDuration을 넘겨 부를 수 없고 앞 단계가 남긴 시간은 뒤 단계가 쓴다.
+  const context: PipelineContext = {
+    config,
+    onUsage: hooks.onUsage,
+    onStage: hooks.onStage,
+    budget: createAnalysisBudget(),
+  };
+  const normalizedIdeas = await normalizeDrafts(payload, context);
 
   hooks.onStage({ stage: 'merge', status: 'started' });
   const mergeResultRaw = await callGmsJson<PlanMergeAnalysisResult>(
     buildMergeNormalizedIdeasPrompt(payload, normalizedIdeas),
-    { maxOutputTokens: MERGE_MAX_OUTPUT_TOKENS, config, onUsage: hooks.onUsage },
+    {
+      maxOutputTokens: MERGE_MAX_OUTPUT_TOKENS,
+      config,
+      onUsage: hooks.onUsage,
+      // 가장 큰 호출이라 상한이 가장 높다. normalize가 빨랐으면 120초보다 더 받는다.
+      ...context.budget.forStage('merge'),
+    },
   );
   hooks.onStage({ stage: 'merge', status: 'done' });
 
-  const merge = await buildMergeResult(payload, mergeResultRaw, normalizedIdeas, {
-    config,
-    onUsage: hooks.onUsage,
-    onStage: hooks.onStage,
-  });
+  const merge = await buildMergeResult(payload, mergeResultRaw, normalizedIdeas, context);
   const mergeErrors = collectMergeBlockers(payload, merge);
 
   if (!mergeErrors.length) {
@@ -851,7 +889,7 @@ async function runAnalysisPipeline(
       scope.blockIndexes,
       mergeErrors,
       normalizedIdeas,
-      { config, onUsage: hooks.onUsage, onStage: hooks.onStage },
+      context,
     );
 
     if (blockRepaired) {
@@ -879,13 +917,14 @@ async function runAnalysisPipeline(
   hooks.onStage({ stage: 'repair', status: 'started' });
   const repairedResultRaw = await callGmsJson<PlanMergeAnalysisResult>(
     buildPlanMergeRepairPrompt(payload, merge.result, mergeErrors, normalizedIdeas),
-    { maxOutputTokens: MERGE_MAX_OUTPUT_TOKENS, config, onUsage: hooks.onUsage },
+    {
+      maxOutputTokens: MERGE_MAX_OUTPUT_TOKENS,
+      config,
+      onUsage: hooks.onUsage,
+      ...context.budget.forStage('repair'),
+    },
   );
-  const repaired = await buildMergeResult(payload, repairedResultRaw, normalizedIdeas, {
-    config,
-    onUsage: hooks.onUsage,
-    onStage: hooks.onStage,
-  });
+  const repaired = await buildMergeResult(payload, repairedResultRaw, normalizedIdeas, context);
   const repairErrors = collectMergeBlockers(payload, repaired);
 
   if (repairErrors.length) {

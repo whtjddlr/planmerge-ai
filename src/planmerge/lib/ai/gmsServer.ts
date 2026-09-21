@@ -41,6 +41,20 @@ type GmsJsonCallOptions = {
   reasoningEffort?: ReasoningEffort;
   jsonSchema?: ResponsesJsonSchema;
   signal?: AbortSignal;
+  /**
+   * 이 호출 한 건의 제한 시간. 없으면 DEFAULT_REQUEST_TIMEOUT_MS.
+   *
+   * 단계마다 다른 값을 주는 쪽은 분석 라우트다(analysisBudget.ts) — merge는 크고
+   * normalize는 작다. 단건 라우트는 자기 maxDuration보다 짧은 값을 준다.
+   */
+  timeoutMs?: number;
+  /**
+   * 이 시각 이후로는 새 요청을 내지 않는다(epoch ms).
+   *
+   * 이게 있으면 타임아웃도 재시도한다 — 남은 시간이 한 번 더 부를 만큼 있을 때만.
+   * 없으면 예전대로 타임아웃은 그 자리에서 실패다.
+   */
+  deadlineAt?: number;
 };
 
 export type ResponsesJsonCallOptions = GmsJsonCallOptions & {
@@ -98,7 +112,19 @@ const DEFAULT_OPENAI_ANALYSIS_MODEL = ANALYSIS_MODEL_PREFERENCE[0];
 // 업스트림이 응답을 물고 있으면 분석 라우트가 초안 수만큼의 병렬 요청을
 // 함수 타임아웃까지 잡고 있게 되므로 요청 단위로 끊는다. 추론 모델은 기존
 // 60초 안에 끝나지 않는 경우가 있어 한도를 올린다.
-const GMS_REQUEST_TIMEOUT_MS = 120_000;
+//
+// 이 값은 제한 시간을 주지 않은 호출의 기본값이다. 분석 라우트는 단계별로 계산한
+// 값을 넘긴다(analysisBudget.ts) — 같은 120초를 모든 호출에 주면 merge 한 건이
+// 느릴 때 남은 예산이 200초 있어도 분석 전체가 실패한다.
+const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
+// deadline이 거의 다 찼어도 0이나 음수로 AbortSignal.timeout을 부르지 않는다
+// (즉시 중단된다). 어차피 못 끝낼 호출이지만, 끊긴 연결보다 타임아웃 오류가 낫다.
+//
+// 이 바닥값은 **deadline에서 나온 값에만** 적용한다. 호출자가 직접 요청한 제한 시간을
+// 여기까지 끌어올리면 안 된다 — 로컬 검증에서 3초를 요청한 호출이 5초를 기다렸고,
+// deadline 2초가 남은 호출도 5초를 기다렸다. 예산 초과는 최대 이 값만큼이다(파이프라인
+// 예산 270초와 maxDuration 300초 사이의 30초 안에 들어간다).
+const MIN_REQUEST_TIMEOUT_MS = 5_000;
 
 // 추론 모델(gpt-5 계열 등)은 temperature 같은 샘플링 파라미터를 400으로 거부한다.
 // 모델명을 정규식으로 분기하면 새 모델이 나올 때마다 같은 버그가 재발하므로,
@@ -114,6 +140,13 @@ const ADAPTIVE_PARAMS = new Set(['temperature', 'reasoning', 'top_p', 'max_outpu
 // 재시도가 없으면 그 한 건이 분석 전체를 실패시킨다.
 const RETRYABLE_STATUSES = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
 const MAX_TRANSIENT_RETRIES = 2;
+/**
+ * 타임아웃은 한 번만 다시 부른다.
+ *
+ * 일시적 오류(429/5xx)와 달리 타임아웃은 실패를 아는 데 제한 시간을 다 쓴다. 두 번
+ * 재시도하면 예산 대부분이 기다림이 되고, 뒤 단계에 남는 시간이 없다.
+ */
+const MAX_TIMEOUT_RETRIES = 1;
 const RETRY_BASE_DELAY_MS = 1_000;
 const RETRY_MAX_DELAY_MS = 20_000;
 
@@ -446,6 +479,56 @@ function buildRequestBody(
   return body;
 }
 
+export type RequestTimeoutInput = {
+  timeoutMs?: number;
+  deadlineAt?: number;
+  now?: number;
+};
+
+/**
+ * 이번 시도에 줄 제한 시간. deadline이 있으면 절대 그 너머로 기다리지 않는다.
+ *
+ * 순수 함수라 회귀 케이스가 직접 부른다.
+ */
+export function requestTimeoutMs(input: RequestTimeoutInput): number {
+  const requested = input.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+
+  if (input.deadlineAt === undefined) {
+    return requested;
+  }
+
+  const remainingMs = input.deadlineAt - (input.now ?? Date.now());
+
+  return Math.min(requested, Math.max(MIN_REQUEST_TIMEOUT_MS, remainingMs));
+}
+
+/** fetch의 AbortSignal.timeout이 던지는 오류. 호출자 취소(AbortError)와 구분된다. */
+function isRequestTimeout(error: unknown): boolean {
+  return error instanceof Error && error.name === 'TimeoutError';
+}
+
+/**
+ * 타임아웃을 다시 불러도 되는가.
+ *
+ * 예산을 모르면 부르지 않는다 — 함수 타임아웃까지 남은 시간을 알 수 없으니, 재시도가
+ * 플랫폼에 끊기는 쪽으로 갈 수 있다. 예산을 알면 "한 번 더 온전히 부를 시간이 남았다"만
+ * 본다. 호출자가 이미 포기했으면(병렬 호출 중 한 건이 실패해 남은 호출을 끊은 경우)
+ * 아무도 읽지 않을 응답에 제한 시간을 한 번 더 쓰지 않는다.
+ *
+ * 순수 함수라 회귀 케이스가 직접 부른다.
+ */
+export function shouldRetryAfterTimeout(
+  input: RequestTimeoutInput & { aborted?: boolean },
+): boolean {
+  if (input.aborted || input.deadlineAt === undefined) {
+    return false;
+  }
+
+  const fullAttemptMs = input.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+
+  return input.deadlineAt - (input.now ?? Date.now()) >= fullAttemptMs;
+}
+
 export async function callResponsesJsonWithMetadata<T>(
   prompt: string,
   options: ResponsesJsonCallOptions,
@@ -464,7 +547,7 @@ export async function callResponsesJsonWithMetadata<T>(
     // 업스트림이 거부하는 파라미터를 학습할 때까지 최대 ADAPTIVE_PARAMS 수만큼 재시도한다.
     for (let round = 0; round <= ADAPTIVE_PARAMS.size; round += 1) {
       const omit = unsupportedParamsFor(selectedModel);
-      const timeoutSignal = AbortSignal.timeout(GMS_REQUEST_TIMEOUT_MS);
+      const timeoutSignal = AbortSignal.timeout(requestTimeoutMs(options));
       const response = await fetch(options.apiUrl, {
         method: 'POST',
         signal: options.signal
@@ -532,20 +615,40 @@ export async function callResponsesJsonWithMetadata<T>(
   };
 
   // 일시적 업스트림 오류는 지수 백오프로 되살린다. 파라미터 학습 루프와는 별개다.
+  // 타임아웃도 되살리지만 한도와 조건이 달라서(기다림이 예산을 쓴다) 따로 센다.
   const attemptWithRetry = async (): Promise<ResponsesJsonResult<T>> => {
-    for (let transientAttempt = 0; ; transientAttempt += 1) {
+    let transientRetries = 0;
+    let timeoutRetries = 0;
+
+    for (;;) {
       try {
         return await attempt();
       } catch (error) {
-        if (!(error instanceof TransientUpstreamError) || transientAttempt >= MAX_TRANSIENT_RETRIES) {
-          throw error;
+        if (error instanceof TransientUpstreamError && transientRetries < MAX_TRANSIENT_RETRIES) {
+          const waitMs = backoffDelayMs(transientRetries, error.retryAfterMs);
+          transientRetries += 1;
+          console.warn(
+            `[responses] ${selectedModel} returned ${error.status}; retry ${transientRetries}/${MAX_TRANSIENT_RETRIES} in ${Math.round(waitMs)}ms.`,
+          );
+          await delay(waitMs, options.signal);
+          continue;
         }
 
-        const waitMs = backoffDelayMs(transientAttempt, error.retryAfterMs);
-        console.warn(
-          `[responses] ${selectedModel} returned ${error.status}; retry ${transientAttempt + 1}/${MAX_TRANSIENT_RETRIES} in ${Math.round(waitMs)}ms.`,
-        );
-        await delay(waitMs, options.signal);
+        if (
+          isRequestTimeout(error)
+          && timeoutRetries < MAX_TIMEOUT_RETRIES
+          && shouldRetryAfterTimeout({ ...options, aborted: options.signal?.aborted })
+        ) {
+          const budgetLeftSeconds = Math.round(((options.deadlineAt ?? Date.now()) - Date.now()) / 1000);
+          timeoutRetries += 1;
+          console.warn(
+            `[responses] ${selectedModel} timed out; retry ${timeoutRetries}/${MAX_TIMEOUT_RETRIES} `
+            + `(${budgetLeftSeconds}s of budget left).`,
+          );
+          continue;
+        }
+
+        throw error;
       }
     }
   };

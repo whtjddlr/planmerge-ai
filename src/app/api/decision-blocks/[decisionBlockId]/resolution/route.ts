@@ -103,6 +103,9 @@ export async function POST(request: Request, context: RouteContext) {
         maxOutputTokens: 8_000,
         providerLabel: provider.providerLabel,
         reasoningEffort: 'medium',
+        // maxDuration 120초 안에서 끝나야 한다. 기본값(120초)은 함수 한도와 같아서
+        // 플랫폼이 먼저 끊을 수 있다.
+        timeoutMs: 105_000,
         jsonSchema: {
           name: 'planmerge_decision_resolution',
           schema: decisionResolutionProposalJsonSchema,

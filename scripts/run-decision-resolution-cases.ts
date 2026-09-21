@@ -3,6 +3,14 @@ import { applyDecisionOptionOverride, applyDecisionResolutionProposal } from '..
 import { evaluateAnalysisQuality, isActionableFinding } from '../src/planmerge/lib/analysisQuality';
 import { createDocumentSectionsFromAnalysis as sectionsForType, hasConflictOption } from '../src/planmerge/lib/analysisViewModel';
 import { resultSectionsMatchDocumentType } from '../src/planmerge/lib/localWorkspace';
+import {
+  createAnalysisBudget,
+  stageCallTimeoutMs,
+  MIN_CALL_TIMEOUT_MS,
+  PIPELINE_BUDGET_MS,
+  type AnalysisStage,
+} from '../src/planmerge/lib/ai/analysisBudget';
+import { requestTimeoutMs, shouldRetryAfterTimeout } from '../src/planmerge/lib/ai/gmsServer';
 import { createDocumentSectionsFromAnalysis } from '../src/planmerge/lib/analysisViewModel';
 import {
   buildDecisionResolutionPrompt,
@@ -2004,6 +2012,108 @@ const cases: Array<{ id: string; run: () => string }> = [
       assert(!prdSections.some((section) => section.sectionKey === 'pain_points'));
 
       return 'switching the document type invalidates an old result and the load path can say why';
+    },
+  },
+  {
+    id: 'stage-timeouts-spend-the-budget-that-is-actually-left',
+    run: () => {
+      // 한때 모든 호출이 똑같이 120초를 받았다. merge 한 건이 느리면 남은 예산이
+      // 200초 있어도 분석 전체가 502였다.
+      const full = PIPELINE_BUDGET_MS;
+
+      // 앞이 빨랐으면 merge는 예전 120초보다 더 받는다 — 그게 이 변경의 요점이다.
+      assert(stageCallTimeoutMs('merge', full) > 120_000);
+      assert.equal(stageCallTimeoutMs('merge', full), 180_000);
+
+      // 뒤가 빠듯하면 덜 받는다. 남은 100초에서 문서 작성 몫 70초를 뺀 30초.
+      assert.equal(stageCallTimeoutMs('merge', 100_000), 30_000);
+
+      // 바닥 아래로는 내려가지 않는다. 어차피 못 끝낼 호출이라도 즉시 중단은 아니다.
+      assert.equal(stageCallTimeoutMs('merge', 70_000), MIN_CALL_TIMEOUT_MS);
+      assert.equal(stageCallTimeoutMs('compose', 0), MIN_CALL_TIMEOUT_MS);
+
+      // 문서 작성은 마지막이라 남겨 둘 몫이 없다 — 남은 예산을 상한까지 쓴다.
+      assert.equal(stageCallTimeoutMs('compose', 200_000), 120_000);
+
+      return 'a stage gets the smaller of its cap and what is left after the stages that must follow';
+    },
+  },
+  {
+    id: 'no-call-is-allowed-to-outlive-the-pipeline-budget',
+    run: () => {
+      // 예산을 넘겨 부르면 플랫폼이 함수를 끊고, 그러면 응답이 없다 — 사용자는 사유도
+      // 진행 단계도 받지 못한다. 규칙 4가 말하는 정직한 실패가 아니라 끊긴 연결이다.
+      const startedAt = 1_700_000_000_000;
+      const budget = createAnalysisBudget(startedAt);
+
+      assert.equal(budget.deadlineAt, startedAt + PIPELINE_BUDGET_MS);
+
+      const stages: AnalysisStage[] = ['normalize', 'merge', 'placement', 'compose', 'repair'];
+
+      stages.forEach((stage) => {
+        [PIPELINE_BUDGET_MS, 150_000, 60_000, 10_000, -5_000].forEach((remaining) => {
+          const timeout = stageCallTimeoutMs(stage, remaining);
+
+          // 바닥값을 받은 경우를 빼면, 제한 시간과 뒤 단계 몫이 남은 시간을 넘지 않는다.
+          if (timeout > MIN_CALL_TIMEOUT_MS) {
+            assert(timeout <= remaining, `${stage} must not exceed what is left`);
+          }
+        });
+      });
+
+      // 그리고 deadline을 아는 호출은 그 너머로 기다리지 않는다 — 단계가 200초를
+      // 요청해도 남은 시간이 40초면 40초다.
+      assert.equal(
+        requestTimeoutMs({ timeoutMs: 200_000, deadlineAt: startedAt + 40_000, now: startedAt }),
+        40_000,
+      );
+      // deadline을 모르는 호출(스크립트·단건 라우트)은 요청한 값 그대로다.
+      assert.equal(requestTimeoutMs({ timeoutMs: 50_000 }), 50_000);
+      assert.equal(requestTimeoutMs({}), 120_000);
+
+      // 바닥값은 deadline에서 나온 값에만 걸린다. 요청한 제한 시간을 끌어올리면 안 된다 —
+      // 로컬 검증에서 3초를 요청한 호출이 5초를 기다렸다(내가 넣은 버그였다).
+      assert.equal(
+        requestTimeoutMs({ timeoutMs: 3_000, deadlineAt: startedAt + 10_000, now: startedAt }),
+        3_000,
+      );
+      // deadline이 다 찼으면 즉시 중단(0·음수) 대신 바닥값을 준다. 끊긴 연결보다
+      // 타임아웃 오류가 낫다.
+      assert.equal(
+        requestTimeoutMs({ timeoutMs: 60_000, deadlineAt: startedAt - 1_000, now: startedAt }),
+        5_000,
+      );
+
+      return 'every call is clamped to the deadline, so the platform never kills the function mid-pipeline';
+    },
+  },
+  {
+    id: 'a-timeout-is-retried-only-when-the-budget-fits-another-full-attempt',
+    run: () => {
+      // "상한을 올릴까 / 재시도를 붙일까"는 maxDuration과 맞바꾸는 판단처럼 보였지만,
+      // deadline을 들고 다니면 실행 시점에 아는 사실로 정해진다.
+      const now = 1_700_000_000_000;
+
+      // 남은 시간이 한 번 더 온전히 부를 만큼이면 다시 부른다.
+      assert.equal(
+        shouldRetryAfterTimeout({ timeoutMs: 110_000, deadlineAt: now + 160_000, now }),
+        true,
+      );
+      // 아니면 부르지 않는다 — 재시도가 deadline을 넘기는 쪽으로 가면 안 된다.
+      assert.equal(
+        shouldRetryAfterTimeout({ timeoutMs: 160_000, deadlineAt: now + 70_000, now }),
+        false,
+      );
+      // 예산을 모르는 호출은 예전대로 그 자리에서 실패다.
+      assert.equal(shouldRetryAfterTimeout({ timeoutMs: 50_000, now }), false);
+      // 호출자가 이미 포기했으면(병렬 호출 하나가 실패해 남은 호출을 끊었다) 아무도
+      // 읽지 않을 응답에 제한 시간을 한 번 더 쓰지 않는다.
+      assert.equal(
+        shouldRetryAfterTimeout({ timeoutMs: 10_000, deadlineAt: now + 200_000, now, aborted: true }),
+        false,
+      );
+
+      return 'the timeout retry is decided by the deadline at run time, not by a constant chosen in advance';
     },
   },
 ];

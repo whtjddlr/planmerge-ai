@@ -34,7 +34,9 @@ export function classifyAnalysisFailure(error: unknown): AnalysisFailureReason {
   const name = error instanceof Error ? error.name : '';
   const message = error instanceof Error ? error.message : String(error);
 
-  // fetch의 AbortSignal.timeout이 던진다. 실측: 5회 중 1회가 호출 한 건이 120초를 넘겨 여기로 왔다.
+  // fetch의 AbortSignal.timeout이 던진다. 실측: 5회 중 1회가 호출 한 건이 제한 시간을
+  // 넘겨 여기로 왔다. 그 뒤 제한 시간을 단계별 예산으로 바꾸고(analysisBudget.ts) 남은
+  // 예산이 있으면 한 번 다시 부르게 했으므로, 여기까지 오는 것은 재시도까지 실패한 경우다.
   if (name === 'TimeoutError' || name === 'AbortError') return 'upstream_timeout';
   if (name === 'TransientUpstreamError') return 'upstream_transient';
   if (message.startsWith('Normalize validation failed')) return 'normalize_invalid';
@@ -58,7 +60,7 @@ export const analysisFailureHints: Record<Exclude<AnalysisFailureReason, 'unknow
   upstream_transient:
     '모델 제공자가 일시적으로 응답하지 못했습니다(요청 한도 또는 서버 오류). 잠시 후 다시 시도해 주세요.',
   upstream_timeout:
-    '모델 호출 한 건이 120초 안에 끝나지 않았습니다. 모델 쪽 지연이라 다시 시도하면 보통 성공합니다. 반복되면 초안 수를 줄여 보세요.',
+    '모델 호출 한 건이 제한 시간 안에 끝나지 않았습니다. 남은 시간이 있으면 서버가 한 번 다시 불러 보는데 그것도 끝나지 않았습니다. 모델 쪽 지연이라 다시 시도하면 보통 성공하고, 반복되면 초안 수를 줄여 보세요.',
   upstream_rejected:
     '모델 제공자가 요청을 거절했습니다. API 키의 권한과 모델 접근 범위를 확인해 주세요.',
   response_incomplete:

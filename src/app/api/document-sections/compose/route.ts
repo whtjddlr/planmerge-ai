@@ -105,7 +105,8 @@ export async function POST(request: Request) {
   try {
     const raw = await callGmsJson<unknown>(
       buildDocumentCompositionPrompt(parsedPayload.payload, blocks),
-      { maxOutputTokens: SECTION_MAX_OUTPUT_TOKENS, config },
+      // maxDuration 60초. 섹션 하나라 분석의 문서 작성보다 훨씬 작은 호출이다.
+      { maxOutputTokens: SECTION_MAX_OUTPUT_TOKENS, config, timeoutMs: 50_000 },
     );
     const composition = validateDocumentCompositionResult(
       raw,
